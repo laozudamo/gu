@@ -70,10 +70,10 @@ def show_stock_details_dialog(code: str, name: str):
 
 def render_header_search():
     """Top layout with Title and Search."""
-    col_title, col_search = st.columns([2, 3])
+    col_title, col_search = st.columns([3, 4])
     
     with col_title:
-        st.title("选股池")
+        st.header("选股池")
         
     with col_search:
         # Search Box with fuzzy matching
