@@ -20,34 +20,63 @@ def calculate_ma(day_count: int, df: pd.DataFrame) -> list[float]:
     df_ma = df.rolling(day_count).mean().round(2).fillna("-")
     return df_ma.values.tolist()
 
+def calculate_boll(df: pd.DataFrame, n=20) -> tuple[list[float], list[float], list[float]]:
+    # Simple BOLL: Mid=MA20, Upper=Mid+2*std, Lower=Mid-2*std
+    close = df['收盘']
+    mid = close.rolling(n).mean()
+    std = close.rolling(n).std()
+    upper = mid + 2 * std
+    lower = mid - 2 * std
+    
+    return (
+        upper.round(2).fillna("-").tolist(),
+        mid.round(2).fillna("-").tolist(),
+        lower.round(2).fillna("-").tolist()
+    )
 
-def draw_pro_kline(df: pd.DataFrame) -> Grid:
+def calculate_macd(df: pd.DataFrame) -> tuple[list[float], list[float], list[float]]:
+    # MACD: EMA12, EMA26, DIFF, DEA, MACD
+    close = df['收盘']
+    ema12 = close.ewm(span=12, adjust=False).mean()
+    ema26 = close.ewm(span=26, adjust=False).mean()
+    diff = ema12 - ema26
+    dea = diff.ewm(span=9, adjust=False).mean()
+    macd = (diff - dea) * 2
+    
+    return (
+        diff.round(3).fillna("-").tolist(),
+        dea.round(3).fillna("-").tolist(),
+        macd.round(3).fillna("-").tolist()
+    )
+
+def draw_pro_kline(df: pd.DataFrame, main_indicator="MA", sub_indicator="VOL") -> Grid:
     x_data, y_data, df_close, y_vol = split_data(df)
-
+    
+    # --- Main Chart (Kline) ---
     kline = (
         Kline()
         .add_xaxis(xaxis_data=x_data)
         .add_yaxis(
-            series_name=t("daily_k"),
+            series_name="日K",
             y_axis=y_data,
             itemstyle_opts=opts.ItemStyleOpts(color="#ec0000", color0="#00da3c"),
         )
         .set_global_opts(
-            legend_opts=opts.LegendOpts(is_show=False, pos_bottom=10, pos_left="center"),
+            legend_opts=opts.LegendOpts(is_show=True, pos_bottom=10, pos_left="center"),
             datazoom_opts=[
                 opts.DataZoomOpts(
                     is_show=False,
                     type_="inside",
                     xaxis_index=[0, 1],
-                    range_start=80,
+                    range_start=95,
                     range_end=100,
                 ),
                 opts.DataZoomOpts(
                     is_show=True,
                     xaxis_index=[0, 1],
                     type_="slider",
-                    pos_top="85%",
-                    range_start=80,
+                    pos_top="92%", # Moved down slightly
+                    range_start=95,
                     range_end=100,
                 ),
             ],
@@ -78,106 +107,142 @@ def draw_pro_kline(df: pd.DataFrame) -> Grid:
                 link=[{"xAxisIndex": "all"}],
                 label=opts.LabelOpts(background_color="#777"),
             ),
-            brush_opts=opts.BrushOpts(
-                x_axis_index="all",
-                brush_link="all",
-                out_of_brush={"colorAlpha": 0.1},
-                brush_type="lineX",
+            toolbox_opts=opts.ToolboxOpts(
+                is_show=True,
+                feature={
+                    "saveAsImage": {"show": True, "title": "Save"},
+                    "dataZoom": {"show": True, "title": {"zoom": "Zoom", "back": "Reset"}},
+                    "restore": {"show": True, "title": "Restore"},
+                },
+                pos_right="2%",
+                pos_top="0%",
             ),
         )
     )
 
-    line = (
-        Line()
-        .add_xaxis(xaxis_data=x_data)
-        .add_yaxis(
-            series_name="MA5",
-            y_axis=calculate_ma(5, df_close),
-            is_smooth=True,
-            is_hover_animation=False,
-            linestyle_opts=opts.LineStyleOpts(width=3, opacity=0.5),
-            label_opts=opts.LabelOpts(is_show=False),
-        )
-        .add_yaxis(
-            series_name="MA10",
-            y_axis=calculate_ma(10, df_close),
-            is_smooth=True,
-            is_hover_animation=False,
-            linestyle_opts=opts.LineStyleOpts(width=3, opacity=0.5),
-            label_opts=opts.LabelOpts(is_show=False),
-        )
-        .add_yaxis(
-            series_name="MA20",
-            y_axis=calculate_ma(20, df_close),
-            is_smooth=True,
-            is_hover_animation=False,
-            linestyle_opts=opts.LineStyleOpts(width=3, opacity=0.5),
-            label_opts=opts.LabelOpts(is_show=False),
-        )
-        .add_yaxis(
-            series_name="MA30",
-            y_axis=calculate_ma(30, df_close),
-            is_smooth=True,
-            is_hover_animation=False,
-            linestyle_opts=opts.LineStyleOpts(width=3, opacity=0.5),
-            label_opts=opts.LabelOpts(is_show=False),
-        )
-        .set_global_opts(xaxis_opts=opts.AxisOpts(type_="category"))
-    )
+    # --- Overlays (MA / BOLL) ---
+    line_main = Line().add_xaxis(xaxis_data=x_data)
+    
+    if main_indicator == "MA":
+        ma_list = [5, 10, 20, 30]
+        for d in ma_list:
+            line_main.add_yaxis(
+                series_name=f"MA{d}",
+                y_axis=calculate_ma(d, df_close),
+                is_smooth=True,
+                is_hover_animation=False,
+                linestyle_opts=opts.LineStyleOpts(width=1.5, opacity=0.7),
+                label_opts=opts.LabelOpts(is_show=False),
+            )
+    elif main_indicator == "BOLL":
+        upper, mid, lower = calculate_boll(df)
+        line_main.add_yaxis("UPPER", upper, is_smooth=True, linestyle_opts=opts.LineStyleOpts(width=1, opacity=0.7), label_opts=opts.LabelOpts(is_show=False))
+        line_main.add_yaxis("MID", mid, is_smooth=True, linestyle_opts=opts.LineStyleOpts(width=1.5, opacity=0.7, color="orange"), label_opts=opts.LabelOpts(is_show=False))
+        line_main.add_yaxis("LOWER", lower, is_smooth=True, linestyle_opts=opts.LineStyleOpts(width=1, opacity=0.7), label_opts=opts.LabelOpts(is_show=False))
 
-    bar = (
-        Bar()
-        .add_xaxis(xaxis_data=x_data)
-        .add_yaxis(
-            series_name=t("volume"),
-            y_axis=y_vol,
-            xaxis_index=1,
-            yaxis_index=1,
-            label_opts=opts.LabelOpts(is_show=False),
+    line_main.set_global_opts(xaxis_opts=opts.AxisOpts(type_="category"))
+    
+    overlap_main = kline.overlap(line_main)
+
+    # --- Sub Chart (VOL / MACD) ---
+    sub_chart = None
+    
+    if sub_indicator == "VOL":
+        sub_chart = (
+            Bar()
+            .add_xaxis(xaxis_data=x_data)
+            .add_yaxis(
+                series_name="成交量",
+                y_axis=y_vol,
+                xaxis_index=1,
+                yaxis_index=1,
+                label_opts=opts.LabelOpts(is_show=False),
+            )
+            .set_global_opts(
+                xaxis_opts=opts.AxisOpts(
+                    type_="category",
+                    is_scale=True,
+                    grid_index=1,
+                    boundary_gap=True,
+                    axisline_opts=opts.AxisLineOpts(is_on_zero=False),
+                    axistick_opts=opts.AxisTickOpts(is_show=False),
+                    splitline_opts=opts.SplitLineOpts(is_show=False),
+                    axislabel_opts=opts.LabelOpts(is_show=False),
+                    split_number=20,
+                    min_="dataMin",
+                    max_="dataMax",
+                ),
+                yaxis_opts=opts.AxisOpts(
+                    grid_index=1,
+                    is_scale=True,
+                    split_number=2,
+                    axislabel_opts=opts.LabelOpts(is_show=False),
+                    axisline_opts=opts.AxisLineOpts(is_show=False),
+                    axistick_opts=opts.AxisTickOpts(is_show=False),
+                    splitline_opts=opts.SplitLineOpts(is_show=False),
+                ),
+                legend_opts=opts.LegendOpts(is_show=False),
+            )
         )
-        .set_global_opts(
-            xaxis_opts=opts.AxisOpts(
-                type_="category",
-                is_scale=True,
+    elif sub_indicator == "MACD":
+        diff, dea, macd = calculate_macd(df)
+        # Bar for MACD histogram
+        bar_macd = (
+            Bar()
+            .add_xaxis(xaxis_data=x_data)
+            .add_yaxis(
+                "MACD", 
+                macd, 
+                xaxis_index=1, 
+                yaxis_index=1,
+                label_opts=opts.LabelOpts(is_show=False),
+                itemstyle_opts=opts.ItemStyleOpts(
+                    color=lambda x: "#ec0000" if x > 0 else "#00da3c" # Red up, Green down logic
+                )
+            )
+        )
+        # Lines for DIFF/DEA
+        line_macd = (
+            Line()
+            .add_xaxis(xaxis_data=x_data)
+            .add_yaxis("DIFF", diff, xaxis_index=1, yaxis_index=1, label_opts=opts.LabelOpts(is_show=False), is_symbol_show=False)
+            .add_yaxis("DEA", dea, xaxis_index=1, yaxis_index=1, label_opts=opts.LabelOpts(is_show=False), is_symbol_show=False)
+        )
+        
+        sub_chart = bar_macd.overlap(line_macd)
+        sub_chart.set_global_opts(
+             xaxis_opts=opts.AxisOpts(
+                type_="category", 
                 grid_index=1,
-                boundary_gap=True,
-                axisline_opts=opts.AxisLineOpts(is_on_zero=False),
-                axistick_opts=opts.AxisTickOpts(is_show=False),
-                splitline_opts=opts.SplitLineOpts(is_show=False),
                 axislabel_opts=opts.LabelOpts(is_show=False),
-                split_number=20,
-                min_="dataMin",
-                max_="dataMax",
-            ),
-            yaxis_opts=opts.AxisOpts(
+             ),
+             yaxis_opts=opts.AxisOpts(
                 grid_index=1,
-                is_scale=True,
                 split_number=2,
-                axislabel_opts=opts.LabelOpts(is_show=False),
-                axisline_opts=opts.AxisLineOpts(is_show=False),
-                axistick_opts=opts.AxisTickOpts(is_show=False),
-                splitline_opts=opts.SplitLineOpts(is_show=False),
-            ),
-            legend_opts=opts.LegendOpts(is_show=False),
+             ),
+             legend_opts=opts.LegendOpts(is_show=False),
         )
-    )
 
-    # Kline And Line
-    overlap_kline_line = kline.overlap(line)
-
-    # Grid Overlap + Bar
+    # --- Grid Layout ---
     grid_chart = Grid(
         init_opts=opts.InitOpts(
             animation_opts=opts.AnimationOpts(animation=False),
+            width="100%",
+            height="700px"
         )
     )
+    
+    # Main Chart (Top 60%)
     grid_chart.add(
-        overlap_kline_line,
-        grid_opts=opts.GridOpts(pos_left="10%", pos_right="8%", height="50%"),
+        overlap_main,
+        grid_opts=opts.GridOpts(pos_left="10%", pos_right="8%", height="55%"),
     )
-    grid_chart.add(
-        bar,
-        grid_opts=opts.GridOpts(pos_left="10%", pos_right="8%", pos_top="63%", height="16%"),
-    )
+    
+    # Sub Chart (Bottom 20%)
+    if sub_chart:
+        grid_chart.add(
+            sub_chart,
+            grid_opts=opts.GridOpts(pos_left="10%", pos_right="8%", pos_top="68%", height="20%"),
+        )
 
     return grid_chart
