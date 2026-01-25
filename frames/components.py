@@ -19,6 +19,7 @@ from utils.stock_data import (
     move_to_watching_pool,
     move_to_trading_pool,
     move_from_trading_to_watching,
+    move_from_watching_to_picking,
     add_transaction
 )
 from utils.risk_engine import calculate_risk_metrics
@@ -442,7 +443,7 @@ def render_stock_table_common(pool: list, market_data: pd.DataFrame, pool_type: 
             with c7:
                 # Common: Details, Note, Tags
                 # Specific: Move/Remove
-                b1, b2, b3, b4, b5 = st.columns([1, 1, 1, 1, 1])
+                b1, b2, b3, b4, b5, b6 = st.columns([1, 1, 1, 1, 1, 1])
                 
                 with b1:
                     if st.button("📊", key=f"d_{pool_type}_{code}", help="详情"):
@@ -479,6 +480,12 @@ def render_stock_table_common(pool: list, market_data: pd.DataFrame, pool_type: 
                             time.sleep(0.5)
                             st.rerun()
                     with b5:
+                        if st.button("🔙", key=f"bk_{pool_type}_{code}", help="移回选股池"):
+                            success, msg = move_from_watching_to_picking(code)
+                            st.toast(msg)
+                            time.sleep(0.5)
+                            st.rerun()
+                    with b6:
                         if st.button("🗑️", key=f"rm_{pool_type}_{code}", help="移除"):
                             success, msg = remove_from_watching_pool(code)
                             st.toast(msg)
@@ -495,5 +502,11 @@ def render_stock_table_common(pool: list, market_data: pd.DataFrame, pool_type: 
                     with b5:
                         if st.button("💸", key=f"tr_{pool_type}_{code}", help="交易面板"):
                              transaction_dialog(code, name, price)
+                    with b6:
+                        if st.button("🗑️", key=f"rm_{pool_type}_{code}", help="删除"):
+                            success, msg = remove_from_trading_pool(code)
+                            st.toast(msg)
+                            time.sleep(0.5)
+                            st.rerun()
             
             st.divider()

@@ -510,6 +510,23 @@ def remove_from_watching_pool(code: str):
     save_watching_pool(pool)
     return True, f"已移除 {code}。"
 
+def move_from_watching_to_picking(code: str):
+    watching_pool = load_watching_pool()
+    stock = next((s for s in watching_pool if s['code'] == code), None)
+    
+    if not stock:
+        return False, "股票不在观察池中"
+        
+    picking_pool = load_stock_pool()
+    if not any(s['code'] == code for s in picking_pool):
+        # Clean up fields specific to watching/trading if any?
+        # For now just keep it simple
+        picking_pool.append(stock)
+        save_stock_pool(picking_pool)
+        
+    remove_from_watching_pool(code)
+    return True, f"已将 {stock['name']} 移回选股池"
+
 # --- Trading Pool Functions ---
 
 def load_trading_pool() -> List[Dict[str, Any]]:
