@@ -7,6 +7,7 @@ from charts.stock import draw_pro_kline
 from utils.locale import t
 from utils.stock_data import (
     get_market_snapshot, 
+    get_all_stock_list,
     load_stock_pool, 
     add_to_pool, 
     remove_from_pool,
@@ -15,8 +16,10 @@ from utils.stock_data import (
     get_stock_history,
     get_stock_financials,
     get_realtime_price,
-    get_market_status
+    get_market_status,
+    get_pool_financials
 )
+from utils.cache_manager import get_cache_manager
 
 # --- Dialogs ---
 
@@ -195,87 +198,132 @@ def render_market_status():
         unsafe_allow_html=True
     )
 
+@dialog("交易面板 / Transaction Panel", width="small")
+def transaction_dialog(code: str, name: str, price: float):
+    st.markdown(f"### {name} ({code})")
+    st.markdown(f"当前价格: **{price}**")
+    
+    tab1, tab2 = st.tabs(["买入", "卖出"])
+    
+    with tab1:
+        col1, col2 = st.columns(2)
+        with col1:
+            buy_price = st.number_input("买入价格", value=float(price) if price != "-" else 0.0, step=0.01, key=f"buy_p_{code}")
+        with col2:
+            buy_vol = st.number_input("买入数量", value=100, step=100, key=f"buy_v_{code}")
+        
+        if st.button("🔴 买入 / Buy", type="primary", use_container_width=True, key=f"btn_buy_{code}"):
+            st.toast(f"模拟买入: {name} {buy_vol}股 @ {buy_price}", icon="💸")
+            time.sleep(1)
+            st.rerun()
+
+    with tab2:
+        col1, col2 = st.columns(2)
+        with col1:
+            sell_price = st.number_input("卖出价格", value=float(price) if price != "-" else 0.0, step=0.01, key=f"sell_p_{code}")
+        with col2:
+            sell_vol = st.number_input("卖出数量", value=100, step=100, key=f"sell_v_{code}")
+            
+        if st.button("🟢 卖出 / Sell", type="primary", use_container_width=True, key=f"btn_sell_{code}"):
+            st.toast(f"模拟卖出: {name} {sell_vol}股 @ {sell_price}", icon="💰")
+            time.sleep(1)
+            st.rerun()
+
 def render_header_search():
     """Top layout with Title and Search."""
     # Market Status Banner
     render_market_status()
     
     col_title, col_search = st.columns([2, 3])
-    
-    # with col_title:
-    #     st.header("选股池 / Stock Pool")
         
     with col_search:
         # Optimized Layout: Search Input + Add Button + Refresh Button in one line
-        c1, c2, c3 = st.columns([6, 1, 1], gap="small")
+        # Use a container to simulate dropdown behavior
         
-        with c1:
-            search_query = st.text_input("Search", placeholder="代码/名称/拼音 (e.g. 600519)", label_visibility="collapsed")
-            
-        with c3:
-            if st.button("🔄", help="刷新行情", use_container_width=True):
-                st.cache_data.clear()
-                st.rerun()
-                
-        # Handle Search Logic
+        # Search Box
+        search_query = st.text_input(
+            "Search", 
+            placeholder="🔍 输入代码/名称/拼音 (回车搜索)", 
+            label_visibility="collapsed",
+            help="输入股票代码、名称或拼音缩写，按回车搜索"
+        )
+        
+        # Debounce/Delay simulation (in a real async app, we'd use a timer)
+        # Here we rely on Streamlit's re-run model.
+        
         if search_query:
-            market_data = get_market_snapshot()
-            if not market_data.empty:
+            # 1. Fetch Lightweight List (Cached)
+            with st.spinner("Searching..."):
+                all_stocks = get_all_stock_list()
+                
+            if not all_stocks.empty:
                 search_query = search_query.upper()
                 mask = (
-                    market_data['代码'].astype(str).str.contains(search_query) | 
-                    market_data['名称'].str.contains(search_query)
+                    all_stocks['代码'].astype(str).str.contains(search_query) | 
+                    all_stocks['名称'].str.contains(search_query)
                 )
-                if 'pinyin' in market_data.columns:
-                    mask |= market_data['pinyin'].str.contains(search_query)
+                if 'pinyin' in all_stocks.columns:
+                    mask |= all_stocks['pinyin'].str.contains(search_query)
                 
-                results = market_data[mask].head(1) # Get top result for quick add
+                results = all_stocks[mask].head(5) # Limit to 5 results for "Dropdown" feel
                 
-                # Dynamic "Add" button in the middle column
-                with c2:
-                     if not results.empty:
-                        row = results.iloc[0]
-                        if st.button("➕", key=f"quick_add_{row['代码']}", help=f"添加 {row['名称']}", use_container_width=True):
-                            success, msg = add_to_pool(row['代码'], row['名称'])
-                            if success:
-                                st.toast(msg, icon="✅")
-                                time.sleep(0.5)
-                                st.rerun()
-                            else:
-                                st.toast(msg, icon="⚠️")
-                     else:
-                        st.button("➕", disabled=True, use_container_width=True)
+                if not results.empty:
+                    # Show results in an expander-like container or just list
+                    st.markdown("---")
+                    st.caption(f"找到 {len(results)} 个匹配项:")
+                    
+                    for _, row in results.iterrows():
+                        rc1, rc2, rc3 = st.columns([4, 2, 1])
+                        with rc1:
+                            st.write(f"**{row['代码']}**")
+                        with rc2:
+                            st.write(row['名称'])
+                        with rc3:
+                            if st.button("➕", key=f"add_{row['代码']}", help=f"添加 {row['名称']}"):
+                                success, msg = add_to_pool(row['代码'], row['名称'])
+                                if success:
+                                    st.toast(msg, icon="✅")
+                                    time.sleep(0.5)
+                                    st.rerun()
+                                else:
+                                    st.toast(msg, icon="⚠️")
+                else:
+                    st.warning("未找到匹配股票")
+            else:
+                st.error("无法加载股票列表")
 
-        else:
-             with c2:
-                st.button("➕", disabled=True, use_container_width=True)
 
-@st.fragment
-def render_context_menu():
-    """
-    Simulated Right-Click Context Menu using Streamlit's Popover logic.
-    Since true right-click isn't supported, we use an Actions menu per row.
-    """
-    pass  # Logic integrated into the action bar below
 
 def render_stock_table(pool: list, market_data: pd.DataFrame):
     if not pool:
         st.info("选股池为空，请搜索添加股票。")
         return
 
-    # 1. Build DataFrame for Display
-    rows = []
+    # Task 2: Data Update Timestamp & Latest Data Check
+    update_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    st.caption(f"📅 数据更新时间: {update_time} | 默认展示最近交易日数据")
+
+    # Table Header
+    # Layout: Code(1.2) | Name(1.5) | Price(1.2) | Change(1.2) | PE(1.0) | Operations(3.0)
+    header_cols = st.columns([1.2, 1.5, 1.2, 1.2, 1.0, 3.0])
+    headers = ["代码", "名称", "最新价", "涨跌幅", "市盈率", "操作"]
+    for col, h in zip(header_cols, headers):
+        col.markdown(f"**{h}**")
+        
+    st.divider()
+
+    # Rows
     for s in pool:
         code = s['code']
         name = s['name']
         
-        # Market Data
+        # Market Data Logic
         price = "-"
         change = 0.0
         pe = "-"
         pb = "-"
+        volume = 0
         
-        # Try bulk market data first
         if not market_data.empty:
             matches = market_data[market_data['代码'] == code]
             if not matches.empty:
@@ -284,121 +332,79 @@ def render_stock_table(pool: list, market_data: pd.DataFrame):
                 change = row.get('涨跌幅', 0)
                 pe = row.get('市盈率-动态', '-')
                 pb = row.get('市净率', '-')
+                volume = row.get('成交量', 0)
         
-        # Fallback to individual fetch if price is missing
+        # Fallback
         if price == "-" or price is None or pd.isna(price):
             realtime = get_realtime_price(code)
             if realtime:
                 price = realtime.get('latest', '-')
                 change = realtime.get('change', 0)
-                # PE/PB not available in history
         
-        # Ensure values are not NaN before display to avoid table errors
+        # Sanitize
         if pd.isna(price): price = "-"
         if pd.isna(change): change = 0.0
         if pd.isna(pe): pe = "-"
-        if pd.isna(pb): pb = "-"
         
-        # Note content preview
-        note = s.get('note', '')
-        if isinstance(note, dict):
-            note = note.get('content', '')
+        # Task 2: Abnormal Data Mark (Suspended/Stop)
+        is_suspended = False
+        if volume == 0 and (price == "-" or price == 0):
+             is_suspended = True
         
-        rows.append({
-            "code": code,
-            "name": name,
-            "price": price,
-            "change": change,
-            "pe": pe,
-            "pb": pb,
-            "note": note
-        })
-    
-    df = pd.DataFrame(rows)
-
-    # Visualization: Trend & Color
-    # 1. Trend Icon
-    def get_trend(val):
-        if isinstance(val, (int, float)):
-            if val > 0: return "📈"
-            if val < 0: return "📉"
-        return "➖"
-    
-    df.insert(4, "trend", df['change'].apply(get_trend))
-
-    # 2. Configure Columns
-    column_config = {
-        "code": st.column_config.TextColumn("代码", help="Stock Code"),
-        "name": st.column_config.TextColumn("名称", help="Stock Name"),
-        "price": st.column_config.NumberColumn("最新价", format="%.2f"),
-        "change": st.column_config.NumberColumn("涨跌幅", format="%.2f%%"),
-        "trend": st.column_config.TextColumn("趋势", width="small"),
-        "pe": st.column_config.NumberColumn("市盈率(动)", format="%.2f"),
-        "pb": st.column_config.NumberColumn("市净率", format="%.2f"),
-        "note": st.column_config.TextColumn("备注预览", width="medium"),
-    }
-    
-    # 3. Render Table with Selection
-    st.caption("💡 提示: 选中行后点击下方按钮进行操作")
-    
-    # Apply Styling (China Market: Red=Up, Green=Down)
-    def highlight_change(val):
-        if isinstance(val, (int, float)):
-            color = 'red' if val > 0 else 'green' if val < 0 else 'black'
-            return f'color: {color}'
-        return ''
-
-    styled_df = df.style.map(highlight_change, subset=['change', 'price'])
-
-    selection = st.dataframe(
-        styled_df,
-        column_config=column_config,
-        use_container_width=True,
-        hide_index=True,
-        selection_mode="single-row",
-        on_select="rerun",
-        key="stock_selection"
-    )
-    
-    # 4. Context Menu / Action Bar (Simulated Right Click)
-    if selection.selection.rows:
-        idx = selection.selection.rows[0]
-        selected_row = df.iloc[idx]
-        code = selected_row['code']
-        name = selected_row['name']
-        
-        # Enhanced Context Menu with Popover style animation
+        # Render Row
         with st.container():
-            st.markdown(f"### 🎯 操作: {name} ({code})")
+            c1, c2, c3, c4, c5, c6 = st.columns([1.2, 1.5, 1.2, 1.2, 1.0, 3.0])
             
-            col_menu = st.columns([1, 1, 1, 1])
+            c1.write(f"`{code}`")
             
-            with col_menu[0]:
-                if st.button("📊 详情分析", use_container_width=True, help="查看K线和财务指标"):
-                    snapshot_metrics = {"pe": pe, "pb": pb}
-                    show_stock_details_dialog(code, name, snapshot_metrics)
+            # Name with Badge if suspended
+            if is_suspended:
+                c2.markdown(f"{name} <span style='background-color:#fed7d7; color:#c53030; padding:2px 6px; border-radius:4px; font-size:0.8em'>停牌</span>", unsafe_allow_html=True)
+            else:
+                c2.write(name)
+                
+            c3.write(f"**{price}**")
             
-            with col_menu[1]:
-                if st.button("📝 编辑备注", use_container_width=True, help="添加或修改备注"):
-                    edit_note_dialog(code, name)
+            # Colorized Change
+            color = "red" if change > 0 else "green" if change < 0 else "gray"
+            arrow = "📈" if change > 0 else "📉" if change < 0 else ""
+            c4.markdown(f":{color}[{change:.2f}%] {arrow}")
             
-            with col_menu[2]:
-                if st.button("👁️ 移入观察", use_container_width=True, help="移入观察池"):
-                    success, msg = move_to_watching_pool(code)
-                    if success:
-                        st.toast(msg, icon="✅")
+            c5.write(f"{pe}")
+            
+            # Task 3: Operation Buttons Group
+            with c6:
+                # Use small columns for icons
+                # 📊 Details | 💸 Trade | 👁️ Watch | 🗑️ Delete
+                b1, b2, b3, b4 = st.columns([1, 1, 1, 1])
+                
+                with b1:
+                    if st.button("📊", key=f"btn_det_{code}", help="详情分析", use_container_width=True):
+                         snapshot_metrics = {"pe": pe, "pb": pb}
+                         show_stock_details_dialog(code, name, snapshot_metrics)
+                
+                with b2:
+                    if st.button("�", key=f"btn_trd_{code}", help="交易面板", use_container_width=True):
+                         transaction_dialog(code, name, price)
+                
+                with b3:
+                    if st.button("👁️", key=f"btn_watch_{code}", help="移入观察池", use_container_width=True):
+                        success, msg = move_to_watching_pool(code)
+                        if success:
+                            st.toast(msg, icon="✅")
+                            time.sleep(0.5)
+                            st.rerun()
+                        else:
+                            st.toast(msg, icon="⚠️")
+                            
+                with b4:
+                    if st.button("🗑️", key=f"btn_del_{code}", help="删除", type="primary", use_container_width=True):
+                        success, msg = remove_from_pool(code)
+                        st.toast(msg, icon="🗑️")
                         time.sleep(0.5)
                         st.rerun()
-                    else:
-                        st.warning(msg)
-
-            with col_menu[3]:
-                if st.button("🗑️ 删除股票", type="primary", use_container_width=True, help="移除股票"):
-                    # Secondary Confirmation Logic (Simulated with toast/rerun for now)
-                    success, msg = remove_from_pool(code)
-                    st.toast(msg, icon="🗑️")
-                    time.sleep(0.5)
-                    st.rerun()
+            
+        st.divider()
 
 def stock_picking_pool():
     render_header_search()

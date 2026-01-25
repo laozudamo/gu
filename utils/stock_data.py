@@ -6,6 +6,7 @@ import pandas as pd
 import streamlit as st
 import numpy as np
 from datetime import datetime
+from utils.cache_manager import get_cache_manager
 
 DATA_DIR = "data"
 STOCK_POOL_FILE = os.path.join(DATA_DIR, "stock_pool.json")
@@ -21,6 +22,22 @@ except ImportError:
 def ensure_data_dir():
     if not os.path.exists(DATA_DIR):
         os.makedirs(DATA_DIR)
+
+# Trigger Cache Update (Lazy or Async in real app, here we check on load)
+# Ideally this should be a background thread, but Streamlit execution model is script-based.
+# We can use st.cache_resource to hold the manager and check update.
+@st.cache_resource
+def _init_cache_manager():
+    cm = get_cache_manager()
+    # Attempt update if needed (non-blocking if possible, but here we block briefly to ensure data)
+    try:
+        cm.update_cache()
+    except:
+        pass
+    return cm
+
+# Initialize on module load/first use
+_init_cache_manager()
 
 @st.cache_data(ttl=60)
 def get_market_status() -> Dict[str, str]:
@@ -63,13 +80,83 @@ def get_market_status() -> Dict[str, str]:
     else: # Before 9:30
          return {"status": "CLOSED", "color": "red", "message": "未开盘", "next_open": "09:30"}
 
+@st.cache_data(ttl=60)
+def get_all_stock_list() -> pd.DataFrame:
+    """
+    Fetch basic list of all A-shares (Code & Name) for search.
+    Uses the persistent JSON cache for speed and offline capability.
+    """
+    cm = get_cache_manager()
+    # Try update if stale (lazy check)
+    try:
+        cm.update_cache()
+    except:
+        pass
+        
+    data = cm.get_all_companies()
+    if not data:
+        # Fallback if cache empty
+        return pd.DataFrame()
+        
+    # Convert JSON cache to DataFrame for compatibility
+    rows = []
+    for code, info in data.items():
+        base = info.get('base', {})
+        rows.append({
+            "代码": base.get('code'),
+            "名称": base.get('name'),
+            "pinyin": base.get('pinyin', '')
+        })
+    
+    return pd.DataFrame(rows)
+
 @st.cache_data(ttl=60)  # Cache for 60 seconds
 def get_market_snapshot() -> pd.DataFrame:
     """
     Fetch real-time data for all A-shares.
-    Tries stock_zh_a_spot_em first, falls back to stock_info_a_code_name.
+    Uses persistent cache first, updates if needed.
     """
-    # 1. Try Spot Data (Full Info)
+    cm = get_cache_manager()
+    try:
+        cm.update_cache() # Check and update if > 10 min
+    except:
+        pass
+        
+    data = cm.get_all_companies()
+    if not data:
+         # Direct Fetch Fallback
+         # 1. Try Spot Data (Full Info - EM)
+         try:
+             df = ak.stock_zh_a_spot_em()
+             # ... (Original fallback logic kept for safety or if cache fails completely)
+             # But here we just return the original logic if cache is empty
+             # For brevity, I'll rely on the original implementation below if cache is empty?
+             # No, let's keep the original implementation as a robust fallback in the `except` blocks of cache manager
+             # But here, let's try to construct DF from cache first.
+             pass
+         except:
+             pass
+    
+    if data:
+        rows = []
+        for code, info in data.items():
+            base = info.get('base', {})
+            quote = info.get('quote', {})
+            rows.append({
+                "代码": base.get('code'),
+                "名称": base.get('name'),
+                "pinyin": base.get('pinyin', ''),
+                "最新价": quote.get('price'),
+                "涨跌幅": quote.get('change_pct'),
+                "成交量": quote.get('volume'),
+                "成交额": quote.get('amount'),
+                "市盈率-动态": quote.get('pe', '-'),
+                "市净率": quote.get('pb', '-')
+            })
+        return pd.DataFrame(rows)
+
+    # Fallback to direct API if cache totally failed
+    # 1. Try Spot Data (Full Info - EM)
     try:
         df = ak.stock_zh_a_spot_em()
         # Ensure code is string
@@ -88,9 +175,48 @@ def get_market_snapshot() -> pd.DataFrame:
             
         return df
     except Exception as e:
-        print(f"Error fetching market snapshot (spot): {e}")
+        print(f"Error fetching market snapshot (spot EM): {e}")
+    
+    # 2. Try Spot Data (Fallback - Sina)
+    try:
+        df = ak.stock_zh_a_spot()
+        # Columns: 代码, 名称, 最新价, 涨跌额, 涨跌幅, ...
+        # Normalize to match EM structure where possible
+        df['代码'] = df['代码'].astype(str)
         
-    # 2. Fallback to Basic List (Code & Name only)
+        # Sina returns codes with prefixes (e.g. sh600519, bj920000). 
+        # We need to strip these to match our 6-digit format in stock_pool.json
+        # Using regex to keep only digits might be safest, or just slicing.
+        # Assuming standard A-shares, last 6 digits are the code.
+        import re
+        def clean_code(c):
+            # Extract last 6 digits if possible, or just digits
+            digits = re.findall(r'\d+', c)
+            if digits:
+                return digits[-1][-6:] # Take last 6 digits of the last number found
+            return c
+            
+        df['代码'] = df['代码'].apply(clean_code)
+        
+        # Add missing columns expected by app
+        df['市盈率-动态'] = "-"
+        df['市净率'] = "-"
+        
+        if HAS_PYPINYIN:
+            def get_pinyin_abbr(name):
+                try:
+                    return "".join([w[0] for w in lazy_pinyin(name)]).upper()
+                except:
+                    return ""
+            df['pinyin'] = df['名称'].apply(get_pinyin_abbr)
+        else:
+            df['pinyin'] = ""
+            
+        return df
+    except Exception as e:
+        print(f"Error fetching market snapshot (spot Sina): {e}")
+        
+    # 3. Fallback to Basic List (Code & Name only)
     try:
         df = ak.stock_info_a_code_name()
         df = df.rename(columns={"code": "代码", "name": "名称"})
@@ -168,30 +294,9 @@ def get_realtime_price(code: str) -> Dict[str, Any]:
 @st.cache_data(ttl=3600*24)
 def get_stock_financials(code: str) -> Dict[str, float]:
     """Fetch financial indicators like ROE, Gross Margin."""
-    result = {"ROE": 0.0, "GrossMargin": 0.0, "NetMargin": 0.0}
-    
-    # Method 1: Financial Analysis Indicator
-    try:
-        df = ak.stock_financial_analysis_indicator(symbol=code)
-        if not df.empty:
-            df = df.sort_values('日期', ascending=False)
-            latest = df.iloc[0]
-            
-            def get_val(col_keyword):
-                cols = [c for c in df.columns if col_keyword in c]
-                return float(latest[cols[0]]) if cols else 0.0
-                
-            result["ROE"] = get_val('净资产收益率')
-            result["GrossMargin"] = get_val('销售毛利率')
-            result["NetMargin"] = get_val('销售净利率')
-            return result
-    except Exception as e:
-        print(f"Financial analysis failed for {code}: {e}")
-
-    # Method 2: Fallback (e.g. Abstract or just return 0s to avoid crash)
-    # We could try other APIs here if needed
-    
-    return result
+    # Use Cache Manager for persistent storage
+    cm = get_cache_manager()
+    return cm.get_financials(code)
 
 @st.cache_data(ttl=3600)
 def get_stock_history(code: str, period="daily") -> pd.DataFrame:
@@ -350,3 +455,22 @@ def move_to_watching_pool(code: str):
     remove_from_pool(code)
     
     return True, f"已将 {stock['name']} 移入观察池"
+
+def get_pool_financials(pool: List[Dict[str, Any]]) -> pd.DataFrame:
+    """
+    Fetch financial data for all stocks in the pool.
+    """
+    cm = get_cache_manager()
+    data = []
+    
+    for stock in pool:
+        code = stock['code']
+        # This will use cache or fetch if missing
+        fin = cm.get_financials(code) 
+        fin['code'] = code
+        data.append(fin)
+        
+    if not data:
+        return pd.DataFrame()
+        
+    return pd.DataFrame(data)
