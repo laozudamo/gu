@@ -11,6 +11,7 @@ from utils.cache_manager import get_cache_manager
 DATA_DIR = "data"
 STOCK_POOL_FILE = os.path.join(DATA_DIR, "stock_pool.json")
 WATCHING_POOL_FILE = os.path.join(DATA_DIR, "watching_pool.json")
+TRADING_POOL_FILE = os.path.join(DATA_DIR, "trading_pool.json")
 
 # Try to import pypinyin
 try:
@@ -380,20 +381,30 @@ def remove_from_pool(code: str):
     save_stock_pool(pool)
     return True, f"已移除 {code}。"
 
-def update_stock_note(code: str, note_data: Any):
-    pool = load_stock_pool()
+def update_stock_note(code: str, note_data: Any, pool_type: str = 'picking'):
+    if pool_type == 'picking':
+        pool = load_stock_pool()
+        save_func = save_stock_pool
+    elif pool_type == 'watching':
+        pool = load_watching_pool()
+        save_func = save_watching_pool
+    elif pool_type == 'trading':
+        pool = load_trading_pool()
+        save_func = save_trading_pool
+    else:
+        return
+
     for s in pool:
         if s['code'] == code:
             if isinstance(s.get('note'), str):
                 s['note'] = {
                     "content": s['note'],
-                    # "images": [], # Removed
                     "updated_at": datetime.now().isoformat()
                 }
             
             if isinstance(note_data, dict):
                 # Update existing dict
-                if isinstance(s['note'], dict):
+                if isinstance(s.get('note'), dict):
                     # Remove 'images' if it exists in input or existing data to clean up
                     note_data.pop('images', None)
                     s['note'].pop('images', None)
@@ -404,18 +415,36 @@ def update_stock_note(code: str, note_data: Any):
                 s['note']['updated_at'] = datetime.now().isoformat()
             else:
                 # Fallback for string input (just content)
-                if isinstance(s['note'], dict):
+                if isinstance(s.get('note'), dict):
                     s['note']['content'] = str(note_data)
                     s['note'].pop('images', None)
                     s['note']['updated_at'] = datetime.now().isoformat()
                 else:
                     s['note'] = {
                         "content": str(note_data),
-                        # "images": [], # Removed
                         "updated_at": datetime.now().isoformat()
                     }
             break
-    save_stock_pool(pool)
+    save_func(pool)
+
+def update_stock_tags(code: str, tags: List[str], pool_type: str = 'picking'):
+    if pool_type == 'picking':
+        pool = load_stock_pool()
+        save_func = save_stock_pool
+    elif pool_type == 'watching':
+        pool = load_watching_pool()
+        save_func = save_watching_pool
+    elif pool_type == 'trading':
+        pool = load_trading_pool()
+        save_func = save_trading_pool
+    else:
+        return
+
+    for s in pool:
+        if s['code'] == code:
+            s['tags'] = tags
+            break
+    save_func(pool)
 
 # --- Watching Pool Functions ---
 
@@ -474,3 +503,142 @@ def get_pool_financials(pool: List[Dict[str, Any]]) -> pd.DataFrame:
         return pd.DataFrame()
         
     return pd.DataFrame(data)
+
+def remove_from_watching_pool(code: str):
+    pool = load_watching_pool()
+    pool = [s for s in pool if s['code'] != code]
+    save_watching_pool(pool)
+    return True, f"已移除 {code}。"
+
+# --- Trading Pool Functions ---
+
+def load_trading_pool() -> List[Dict[str, Any]]:
+    ensure_data_dir()
+    if not os.path.exists(TRADING_POOL_FILE):
+        return []
+    try:
+        with open(TRADING_POOL_FILE, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except Exception as e:
+        return []
+
+def save_trading_pool(pool: List[Dict[str, Any]]):
+    ensure_data_dir()
+    try:
+        with open(TRADING_POOL_FILE, 'w', encoding='utf-8') as f:
+            json.dump(pool, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        pass
+
+def move_to_trading_pool(code: str):
+    # Try from Watching Pool first
+    watching_pool = load_watching_pool()
+    stock = next((s for s in watching_pool if s['code'] == code), None)
+    from_pool = 'watching'
+    
+    if not stock:
+        # Try from Picking Pool
+        picking_pool = load_stock_pool()
+        stock = next((s for s in picking_pool if s['code'] == code), None)
+        from_pool = 'picking'
+        
+    if not stock:
+        return False, "股票不在观察池或选股池中"
+    
+    # Add to Trading Pool
+    trading_pool = load_trading_pool()
+    if not any(s['code'] == code for s in trading_pool):
+        # Initialize holding data if needed?
+        # For now just copy the basic info + note + tags
+        stock['added_to_trading_at'] = datetime.now().isoformat()
+        trading_pool.append(stock)
+        save_trading_pool(trading_pool)
+    
+    # Remove from source pool
+    if from_pool == 'watching':
+        remove_from_watching_pool(code)
+    else:
+        remove_from_pool(code)
+        
+    return True, f"已将 {stock['name']} 移入交易池"
+
+def remove_from_trading_pool(code: str):
+    pool = load_trading_pool()
+    pool = [s for s in pool if s['code'] != code]
+    save_trading_pool(pool)
+    return True, f"已移除 {code}。"
+
+def move_from_trading_to_watching(code: str):
+    trading_pool = load_trading_pool()
+    stock = next((s for s in trading_pool if s['code'] == code), None)
+    
+    if not stock:
+        return False, "股票不在交易池中"
+        
+    watching_pool = load_watching_pool()
+    if not any(s['code'] == code for s in watching_pool):
+        watching_pool.append(stock)
+        save_watching_pool(watching_pool)
+        
+    remove_from_trading_pool(code)
+    return True, f"已将 {stock['name']} 移回观察池"
+
+def add_transaction(code: str, trans_type: str, price: float, volume: int):
+    """
+    Record a transaction and update holdings.
+    trans_type: 'buy' or 'sell'
+    """
+    pool = load_trading_pool()
+    stock = next((s for s in pool if s['code'] == code), None)
+    
+    if not stock:
+        return False, "股票不在交易池中"
+    
+    # Initialize fields if missing
+    if 'transactions' not in stock:
+        stock['transactions'] = []
+    if 'holdings' not in stock:
+        stock['holdings'] = {'volume': 0, 'avg_cost': 0.0, 'total_cost': 0.0}
+    
+    # Record Transaction
+    timestamp = datetime.now().isoformat()
+    stock['transactions'].append({
+        'type': trans_type,
+        'price': price,
+        'volume': volume,
+        'time': timestamp
+    })
+    
+    # Update Holdings
+    current_vol = stock['holdings'].get('volume', 0)
+    current_cost = stock['holdings'].get('total_cost', 0.0)
+    
+    if trans_type == 'buy':
+        new_vol = current_vol + volume
+        new_total_cost = current_cost + (price * volume)
+        new_avg_cost = new_total_cost / new_vol if new_vol > 0 else 0.0
+        
+        stock['holdings']['volume'] = new_vol
+        stock['holdings']['total_cost'] = new_total_cost
+        stock['holdings']['avg_cost'] = new_avg_cost
+        
+    elif trans_type == 'sell':
+        if volume > current_vol:
+            return False, "卖出数量超过持仓量"
+        
+        # FIFO or Weighted Average? 
+        # Weighted Average: Cost basis reduces proportionally.
+        # Realized PnL = (Sell Price - Avg Cost) * Sell Volume
+        avg_cost = stock['holdings'].get('avg_cost', 0.0)
+        
+        new_vol = current_vol - volume
+        # Cost reduces proportionally to volume reduction
+        new_total_cost = current_cost * (new_vol / current_vol) if current_vol > 0 else 0.0
+        
+        stock['holdings']['volume'] = new_vol
+        stock['holdings']['total_cost'] = new_total_cost
+        # Avg cost remains same after sell in Weighted Average method, unless volume becomes 0
+        stock['holdings']['avg_cost'] = avg_cost if new_vol > 0 else 0.0
+
+    save_trading_pool(pool)
+    return True, "交易已记录"

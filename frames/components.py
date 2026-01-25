@@ -1,0 +1,443 @@
+import streamlit as st
+import pandas as pd
+import time
+from datetime import datetime
+from streamlit_echarts import st_pyecharts
+from charts.stock import draw_pro_kline
+from utils.stock_data import (
+    load_stock_pool, 
+    load_watching_pool,
+    load_trading_pool,
+    update_stock_note,
+    update_stock_tags,
+    get_stock_financials,
+    get_stock_history,
+    get_realtime_price,
+    remove_from_pool,
+    remove_from_watching_pool,
+    remove_from_trading_pool,
+    move_to_watching_pool,
+    move_to_trading_pool,
+    move_from_trading_to_watching,
+    add_transaction
+)
+
+# --- Dialogs ---
+
+try:
+    from streamlit import dialog
+except ImportError:
+    def dialog(title, **kwargs):
+        def decorator(func):
+            def wrapper(*args, **kwargs):
+                with st.expander(title, expanded=True):
+                    func(*args, **kwargs)
+            return wrapper
+        return decorator
+
+@dialog("编辑备注", width="large")
+def edit_note_dialog(code: str, name: str, pool_type: str):
+    # Load correct pool to get current note
+    if pool_type == 'picking':
+        pool = load_stock_pool()
+    elif pool_type == 'watching':
+        pool = load_watching_pool()
+    elif pool_type == 'trading':
+        pool = load_trading_pool()
+    else:
+        st.error("Invalid pool type")
+        return
+
+    stock = next((s for s in pool if s['code'] == code), None)
+    if not stock:
+        st.error("Stock not found")
+        return
+
+    current_note = stock.get('note', {})
+    if isinstance(current_note, str):
+        current_note = {'content': current_note, 'images': [], 'updated_at': ''}
+    elif not isinstance(current_note, dict):
+        current_note = {'content': '', 'images': [], 'updated_at': ''}
+
+    col1, col2 = st.columns([2, 1])
+    
+    with col1:
+        new_content = st.text_area(
+            "内容 (支持 Markdown)", 
+            value=current_note.get('content', ''), 
+            height=300,
+            help="支持加粗/斜体/列表等基础格式"
+        )
+    
+    with col2:
+        st.caption(f"上次更新: {current_note.get('updated_at', '-')}")
+
+    if st.button("💾 保存", type="primary"):
+        note_data = {
+            "content": new_content,
+            "updated_at": datetime.now().isoformat()
+        }
+        update_stock_note(code, note_data, pool_type=pool_type)
+        st.toast("备注已更新", icon="✅")
+        time.sleep(0.5)
+        st.rerun()
+
+@dialog("编辑标签", width="small")
+def edit_tags_dialog(code: str, name: str, pool_type: str):
+    # Load correct pool
+    if pool_type == 'picking':
+        pool = load_stock_pool()
+    elif pool_type == 'watching':
+        pool = load_watching_pool()
+    elif pool_type == 'trading':
+        pool = load_trading_pool()
+    else:
+        return
+
+    stock = next((s for s in pool if s['code'] == code), None)
+    if not stock:
+        return
+
+    current_tags = stock.get('tags', [])
+    if not isinstance(current_tags, list):
+        current_tags = []
+
+    # Predefined tags
+    PREDEFINED_TAGS = ["半导体", "新能源", "医药", "消费", "AI", "低估值", "高成长", "龙头", "短线", "长线"]
+    
+    selected_tags = st.multiselect("选择标签", options=list(set(PREDEFINED_TAGS + current_tags)), default=current_tags)
+    
+    # Custom tag input
+    new_tag = st.text_input("新增自定义标签 (回车添加)")
+    if new_tag and new_tag not in selected_tags:
+        # This is a bit tricky in Streamlit dialogs without a button, but let's just rely on the multiselect + save
+        pass
+
+    if st.button("💾 保存标签", type="primary"):
+        final_tags = selected_tags
+        if new_tag and new_tag not in final_tags:
+            final_tags.append(new_tag)
+            
+        update_stock_tags(code, final_tags, pool_type=pool_type)
+        st.toast("标签已更新", icon="✅")
+        time.sleep(0.5)
+        st.rerun()
+
+@dialog("股票详情分析", width="large")
+def show_stock_details_dialog(code: str, name: str, snapshot_metrics: dict = None):
+    st.markdown(
+        """
+        <style>
+        div[data-testid="stDialog"] div[role="dialog"] {
+            width: 90vw !important;
+            max-width: 1400px !important;
+        }
+        </style>
+        """, 
+        unsafe_allow_html=True
+    )
+    
+    with st.spinner("加载财务数据..."):
+        fin = get_stock_financials(code)
+    
+    m1, m2, m3, m4, m5 = st.columns(5)
+    
+    roe = fin.get('ROE', 0)
+    gross = fin.get('GrossMargin', 0)
+    net = fin.get('NetMargin', 0)
+    
+    m1.metric("ROE", f"{roe:.2f}%" if roe != 0 else "-")
+    m2.metric("毛利率", f"{gross:.2f}%" if gross != 0 else "-")
+    m3.metric("净利率", f"{net:.2f}%" if net != 0 else "-")
+    
+    pe = snapshot_metrics.get('pe', '-') if snapshot_metrics else '-'
+    pb = snapshot_metrics.get('pb', '-') if snapshot_metrics else '-'
+    
+    m4.metric("PE", pe)
+    m5.metric("PB", pb)
+    
+    st.divider()
+
+    selected_period = "daily"
+    with st.spinner(f"正在加载 {name} 日K 数据..."):
+        hist_df = get_stock_history(code, period=selected_period)
+    
+    if hist_df.empty:
+        st.warning(f"暂无历史数据")
+        return
+
+    chart_df = hist_df.reset_index()
+    chart_df['date'] = chart_df['date'].dt.strftime('%Y-%m-%d')
+    chart_df = chart_df.rename(columns={
+        "date": "日期", "open": "开盘", "close": "收盘", 
+        "high": "最高", "low": "最低", "volume": "成交量"
+    })
+    
+    try:
+        c_ind1, c_ind2 = st.columns([1, 1])
+        with c_ind1:
+            main_ind = st.selectbox("主图指标", ["MA", "BOLL", "None"], index=0, key=f"main_{code}")
+        with c_ind2:
+            sub_ind = st.selectbox("副图指标", ["VOL", "MACD", "None"], index=0, key=f"sub_{code}")
+
+        kline_chart = draw_pro_kline(chart_df, main_indicator=main_ind, sub_indicator=sub_ind)
+        kline_chart.width = "100%"
+        st.caption("💡 操作提示: 鼠标滚轮可缩放图表，点击并拖拽可平移视图")
+        st_pyecharts(kline_chart, height="600px")
+    except Exception as e:
+        st.error(f"图表渲染失败: {e}")
+
+@dialog("交易面板", width="small")
+def transaction_dialog(code: str, name: str, price: float):
+    st.markdown(f"### {name} ({code})")
+    
+    # Handle case where price is "-"
+    current_price = 0.0
+    if isinstance(price, (int, float)):
+        current_price = float(price)
+    elif isinstance(price, str) and price.replace('.','',1).isdigit():
+        current_price = float(price)
+        
+    st.markdown(f"当前价格: **{current_price}**")
+    
+    tab1, tab2 = st.tabs(["买入", "卖出"])
+    
+    with tab1:
+        col1, col2 = st.columns(2)
+        with col1:
+            buy_price = st.number_input("买入价格", value=current_price, step=0.01, key=f"buy_p_{code}")
+        with col2:
+            buy_vol = st.number_input("买入数量", value=100, step=100, key=f"buy_v_{code}")
+        
+        if st.button("🔴 买入 / Buy", type="primary", use_container_width=True, key=f"btn_buy_{code}"):
+            success, msg = add_transaction(code, 'buy', buy_price, buy_vol)
+            if success:
+                st.toast(f"买入成功: {name} {buy_vol}股 @ {buy_price}", icon="💸")
+                time.sleep(1)
+                st.rerun()
+            else:
+                st.error(msg)
+
+    with tab2:
+        col1, col2 = st.columns(2)
+        with col1:
+            sell_price = st.number_input("卖出价格", value=current_price, step=0.01, key=f"sell_p_{code}")
+        with col2:
+            sell_vol = st.number_input("卖出数量", value=100, step=100, key=f"sell_v_{code}")
+            
+        if st.button("🟢 卖出 / Sell", type="primary", use_container_width=True, key=f"btn_sell_{code}"):
+            success, msg = add_transaction(code, 'sell', sell_price, sell_vol)
+            if success:
+                st.toast(f"卖出成功: {name} {sell_vol}股 @ {sell_price}", icon="💰")
+                time.sleep(1)
+                st.rerun()
+            else:
+                st.error(msg)
+
+def render_stock_table_common(pool: list, market_data: pd.DataFrame, pool_type: str):
+    """
+    Shared table renderer for Picking, Watching, and Trading pools.
+    pool_type: 'picking', 'watching', 'trading'
+    """
+    if not pool:
+        st.info("列表为空")
+        return
+
+    update_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    st.caption(f"📅 数据更新: {update_time}")
+
+    # Layout Configuration
+    if pool_type == 'trading':
+        # Code(1) | Name(1.2) | Price/Chg(1.5) | Hold/Cost(1.5) | PnL(1.5) | Note/Tag(1) | Ops(2.3)
+        header_cols = st.columns([1.0, 1.2, 1.5, 1.5, 1.5, 1.0, 2.3])
+        headers = ["代码", "名称", "现价 / 涨跌", "持仓 / 成本", "浮动盈亏", "备注/标签", "操作"]
+    else:
+        # Code(1.2) | Name(1.5) | Price(1.2) | Change(1.2) | Tags(1.5) | Note(0.5) | Ops(3.0)
+        header_cols = st.columns([1.2, 1.5, 1.2, 1.2, 1.5, 0.5, 3.0])
+        headers = ["代码", "名称", "最新价", "涨跌幅", "标签", "备注", "操作"]
+        
+    for col, h in zip(header_cols, headers):
+        col.markdown(f"**{h}**")
+        
+    st.divider()
+
+    for s in pool:
+        code = s['code']
+        name = s['name']
+        note = s.get('note', {})
+        if isinstance(note, str): note = {'content': note}
+        has_note = bool(note.get('content'))
+        tags = s.get('tags', [])
+        
+        # Market Data
+        price = "-"
+        change = 0.0
+        pe = "-"
+        pb = "-"
+        volume = 0
+        
+        if not market_data.empty:
+            matches = market_data[market_data['代码'] == code]
+            if not matches.empty:
+                row = matches.iloc[0]
+                price = row.get('最新价', '-')
+                change = row.get('涨跌幅', 0)
+                pe = row.get('市盈率-动态', '-')
+                pb = row.get('市净率', '-')
+                volume = row.get('成交量', 0)
+        
+        # Fallback
+        if price == "-" or price is None or pd.isna(price):
+            realtime = get_realtime_price(code)
+            if realtime:
+                price = realtime.get('latest', '-')
+                change = realtime.get('change', 0)
+        
+        if pd.isna(price): price = "-"
+        if pd.isna(change): change = 0.0
+        
+        # Ensure price is float for calc
+        current_price_val = 0.0
+        if isinstance(price, (int, float)):
+            current_price_val = float(price)
+        
+        is_suspended = False
+        if volume == 0 and (price == "-" or price == 0):
+             is_suspended = True
+
+        with st.container():
+            if pool_type == 'trading':
+                c1, c2, c3, c4, c5, c6, c7 = st.columns([1.0, 1.2, 1.5, 1.5, 1.5, 1.0, 2.3])
+            else:
+                c1, c2, c3, c4, c5, c6, c7 = st.columns([1.2, 1.5, 1.2, 1.2, 1.5, 0.5, 3.0])
+            
+            # 1. Code
+            c1.write(f"`{code}`")
+            
+            # 2. Name
+            if is_suspended:
+                c2.markdown(f"{name} <span style='background-color:#fed7d7; color:#c53030; padding:2px 4px; border-radius:4px; font-size:0.8em'>停</span>", unsafe_allow_html=True)
+            else:
+                c2.write(name)
+                
+            # 3. Price Info
+            color = "red" if change > 0 else "green" if change < 0 else "gray"
+            arrow = "📈" if change > 0 else "📉" if change < 0 else ""
+            
+            if pool_type == 'trading':
+                # Combined Price / Change
+                c3.markdown(f"**{price}**")
+                c3.markdown(f":{color}[{change:.2f}%] {arrow}")
+            else:
+                # Separate
+                c3.write(f"**{price}**")
+                c4.markdown(f":{color}[{change:.2f}%] {arrow}")
+            
+            # 4. Trading Specifics OR Tags
+            if pool_type == 'trading':
+                holdings = s.get('holdings', {})
+                vol = holdings.get('volume', 0)
+                avg = holdings.get('avg_cost', 0.0)
+                
+                # Hold / Cost
+                c4.write(f"持仓: **{vol}**")
+                c4.caption(f"成本: {avg:.2f}")
+                
+                # PnL
+                if vol > 0 and current_price_val > 0:
+                    market_val = vol * current_price_val
+                    cost_val = holdings.get('total_cost', vol * avg) # total_cost should be accurate
+                    # Or use avg * vol
+                    cost_val_calc = vol * avg
+                    
+                    pnl_val = market_val - cost_val_calc
+                    pnl_pct = (pnl_val / cost_val_calc) * 100 if cost_val_calc > 0 else 0
+                    
+                    pnl_color = "red" if pnl_val > 0 else "green" if pnl_val < 0 else "gray"
+                    c5.markdown(f":{pnl_color}[{pnl_val:+.2f}]")
+                    c5.markdown(f":{pnl_color}[{pnl_pct:+.2f}%]")
+                else:
+                    c5.write("-")
+                    
+                # Note/Tags Combined
+                tag_count = len(tags)
+                note_icon = "📝" if has_note else "📄"
+                c6.write(f"{note_icon}")
+                if tag_count > 0:
+                     c6.caption(f"🏷️ {tag_count}")
+                
+            else:
+                # Standard Tags
+                if tags:
+                    tag_html = "".join([f"<span style='background-color:#e2e8f0; color:#4a5568; padding:2px 6px; border-radius:10px; font-size:0.8em; margin-right:4px'>{t}</span>" for t in tags[:2]])
+                    if len(tags) > 2:
+                        tag_html += "..."
+                    c5.markdown(tag_html, unsafe_allow_html=True)
+                else:
+                    c5.write("-")
+
+                # Note Icon
+                if has_note:
+                    c6.markdown("📝", help=note.get('content')[:100])
+                else:
+                    c6.write("")
+
+            # 7. Operations
+            with c7:
+                # Common: Details, Note, Tags
+                # Specific: Move/Remove
+                b1, b2, b3, b4, b5 = st.columns([1, 1, 1, 1, 1])
+                
+                with b1:
+                    if st.button("📊", key=f"d_{pool_type}_{code}", help="详情"):
+                        show_stock_details_dialog(code, name, {"pe": pe, "pb": pb})
+                
+                with b2:
+                    if st.button("📝", key=f"n_{pool_type}_{code}", help="编辑备注"):
+                        edit_note_dialog(code, name, pool_type)
+                
+                with b3:
+                    if st.button("🏷️", key=f"t_{pool_type}_{code}", help="编辑标签"):
+                        edit_tags_dialog(code, name, pool_type)
+
+                # Custom Buttons based on Pool Type
+                if pool_type == 'picking':
+                    with b4:
+                        if st.button("👁️", key=f"mv_{pool_type}_{code}", help="移入观察池"):
+                            success, msg = move_to_watching_pool(code)
+                            st.toast(msg)
+                            time.sleep(0.5)
+                            st.rerun()
+                    with b5:
+                        if st.button("🗑️", key=f"rm_{pool_type}_{code}", help="删除"):
+                            success, msg = remove_from_pool(code)
+                            st.toast(msg)
+                            time.sleep(0.5)
+                            st.rerun()
+
+                elif pool_type == 'watching':
+                    with b4:
+                        if st.button("🤝", key=f"mv_{pool_type}_{code}", help="移入交易池"):
+                            success, msg = move_to_trading_pool(code)
+                            st.toast(msg)
+                            time.sleep(0.5)
+                            st.rerun()
+                    with b5:
+                        if st.button("🗑️", key=f"rm_{pool_type}_{code}", help="移除"):
+                            success, msg = remove_from_watching_pool(code)
+                            st.toast(msg)
+                            time.sleep(0.5)
+                            st.rerun()
+
+                elif pool_type == 'trading':
+                    with b4:
+                        if st.button("🔙", key=f"mv_{pool_type}_{code}", help="移回观察池"):
+                            success, msg = move_from_trading_to_watching(code)
+                            st.toast(msg)
+                            time.sleep(0.5)
+                            st.rerun()
+                    with b5:
+                        if st.button("💸", key=f"tr_{pool_type}_{code}", help="交易面板"):
+                             transaction_dialog(code, name, price)
+            
+            st.divider()
