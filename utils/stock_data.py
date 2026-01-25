@@ -583,10 +583,11 @@ def move_from_trading_to_watching(code: str):
     remove_from_trading_pool(code)
     return True, f"已将 {stock['name']} 移回观察池"
 
-def add_transaction(code: str, trans_type: str, price: float, volume: int):
+def add_transaction(code: str, trans_type: str, price: float, volume: int, plan: Optional[Dict[str, float]] = None):
     """
     Record a transaction and update holdings.
     trans_type: 'buy' or 'sell'
+    plan: Optional dict with keys 'stop_loss', 'take_profit', 'expected_buy'
     """
     pool = load_trading_pool()
     stock = next((s for s in pool if s['code'] == code), None)
@@ -602,12 +603,16 @@ def add_transaction(code: str, trans_type: str, price: float, volume: int):
     
     # Record Transaction
     timestamp = datetime.now().isoformat()
-    stock['transactions'].append({
+    transaction = {
         'type': trans_type,
         'price': price,
         'volume': volume,
         'time': timestamp
-    })
+    }
+    if plan:
+        transaction['plan'] = plan
+        
+    stock['transactions'].append(transaction)
     
     # Update Holdings
     current_vol = stock['holdings'].get('volume', 0)
@@ -621,6 +626,10 @@ def add_transaction(code: str, trans_type: str, price: float, volume: int):
         stock['holdings']['volume'] = new_vol
         stock['holdings']['total_cost'] = new_total_cost
         stock['holdings']['avg_cost'] = new_avg_cost
+        
+        # Update active plan if provided
+        if plan:
+            stock['holdings']['plan'] = plan
         
     elif trans_type == 'sell':
         if volume > current_vol:

@@ -21,6 +21,7 @@ from utils.stock_data import (
     move_from_trading_to_watching,
     add_transaction
 )
+from utils.risk_engine import calculate_risk_metrics
 
 # --- Dialogs ---
 
@@ -123,8 +124,9 @@ def edit_tags_dialog(code: str, name: str, pool_type: str):
         time.sleep(0.5)
         st.rerun()
 
-@dialog("股票详情分析", width="large")
+@dialog("股票详情", width="large")
 def show_stock_details_dialog(code: str, name: str, snapshot_metrics: dict = None):
+    st.markdown(f"### {name} ({code})")
     st.markdown(
         """
         <style>
@@ -209,8 +211,48 @@ def transaction_dialog(code: str, name: str, price: float):
         with col2:
             buy_vol = st.number_input("买入数量", value=100, step=100, key=f"buy_v_{code}")
         
+        # --- Risk Management Section ---
+        with st.expander("🛡️ 交易计划与风控 (可选)", expanded=True):
+            r1, r2 = st.columns(2)
+            with r1:
+                stop_loss = st.number_input("止损价格 (Stop Loss)", value=0.0, step=0.01, key=f"sl_{code}", help="触发止损的卖出价格")
+            with r2:
+                take_profit = st.number_input("止盈价格 (Take Profit)", value=0.0, step=0.01, key=f"tp_{code}", help="预期获利的卖出价格")
+            
+            # Real-time Calculation
+            if buy_price > 0 and buy_vol > 0:
+                # Only calc if SL or TP is set
+                if stop_loss > 0 or take_profit > 0:
+                    metrics = calculate_risk_metrics(buy_price, stop_loss, take_profit, buy_vol)
+                    
+                    if metrics.get('warnings'):
+                        for w in metrics['warnings']:
+                            st.warning(f"⚠️ {w}")
+                    
+                    if metrics:
+                        # Display Metrics
+                        m1, m2, m3 = st.columns(3)
+                        
+                        risk_val = metrics.get('total_risk', 0)
+                        risk_pct = metrics.get('risk_pct', 0)
+                        m1.metric("潜在亏损", f"{risk_val:.0f}", f"{risk_pct:.1f}%", delta_color="inverse")
+                        
+                        reward_val = metrics.get('total_reward', 0)
+                        reward_pct = metrics.get('reward_pct', 0)
+                        m2.metric("预期盈利", f"{reward_val:.0f}", f"{reward_pct:.1f}%")
+                        
+                        rr = metrics.get('rr_ratio', 0)
+                        m3.metric("盈亏比", f"1 : {rr:.1f}")
+
         if st.button("🔴 买入 / Buy", type="primary", use_container_width=True, key=f"btn_buy_{code}"):
-            success, msg = add_transaction(code, 'buy', buy_price, buy_vol)
+            plan = None
+            if stop_loss > 0 or take_profit > 0:
+                plan = {
+                    "stop_loss": stop_loss,
+                    "take_profit": take_profit,
+                    "expected_buy": buy_price
+                }
+            success, msg = add_transaction(code, 'buy', buy_price, buy_vol, plan=plan)
             if success:
                 st.toast(f"买入成功: {name} {buy_vol}股 @ {buy_price}", icon="💸")
                 time.sleep(1)
@@ -343,6 +385,17 @@ def render_stock_table_common(pool: list, market_data: pd.DataFrame, pool_type: 
                 c4.write(f"持仓: **{vol}**")
                 c4.caption(f"成本: {avg:.2f}")
                 
+                # Show active plan
+                plan = holdings.get('plan', {})
+                if plan:
+                    sl = plan.get('stop_loss', 0)
+                    tp = plan.get('take_profit', 0)
+                    plan_tips = []
+                    if sl > 0: plan_tips.append(f"止损:{sl}")
+                    if tp > 0: plan_tips.append(f"止盈:{tp}")
+                    if plan_tips:
+                        c4.caption(f"🎯 {' '.join(plan_tips)}")
+                
                 # PnL
                 if vol > 0 and current_price_val > 0:
                     market_val = vol * current_price_val
@@ -360,11 +413,14 @@ def render_stock_table_common(pool: list, market_data: pd.DataFrame, pool_type: 
                     c5.write("-")
                     
                 # Note/Tags Combined
-                tag_count = len(tags)
-                note_icon = "📝" if has_note else "📄"
-                c6.write(f"{note_icon}")
-                if tag_count > 0:
-                     c6.caption(f"🏷️ {tag_count}")
+                if has_note:
+                    c6.markdown("📝", help=note.get('content')[:100])
+                else:
+                    c6.write("")
+                    
+                if tags:
+                    tag_html = "".join([f"<span style='background-color:#e2e8f0; color:#4a5568; padding:2px 4px; border-radius:4px; font-size:0.75em; margin-right:2px; display:inline-block; margin-bottom:2px'>{t}</span>" for t in tags[:3]])
+                    c6.markdown(tag_html, unsafe_allow_html=True)
                 
             else:
                 # Standard Tags
