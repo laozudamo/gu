@@ -186,19 +186,60 @@ def draw_pro_kline(df: pd.DataFrame, main_indicator="MA", sub_indicator="VOL") -
         )
     elif sub_indicator == "MACD":
         diff, dea, macd = calculate_macd(df)
-        # Bar for MACD histogram
+        
+        # Identify Golden Cross and Death Cross
+        mark_points = []
+        for i in range(1, len(macd)):
+            if macd[i] == "-" or macd[i-1] == "-":
+                continue
+            
+            # Golden Cross: MACD turns from negative/zero to positive
+            if macd[i-1] <= 0 and macd[i] > 0:
+                mark_points.append(
+                    {
+                        "coord": [x_data[i], dea[i]], 
+                        "value": "金叉",
+                        "symbol": "arrow",
+                        "symbolSize": 10,
+                        "itemStyle": {"color": "#ec0000"}
+                    }
+                )
+            # Death Cross: MACD turns from positive/zero to negative
+            elif macd[i-1] >= 0 and macd[i] < 0:
+                mark_points.append(
+                    {
+                        "coord": [x_data[i], dea[i]], 
+                        "value": "死叉",
+                        "symbol": "arrow",
+                        "symbolRotate": 180,
+                        "symbolSize": 10,
+                        "itemStyle": {"color": "#00da3c"}
+                    }
+                )
+
+        # Bar for MACD histogram with correct colors
+        macd_bar_data = []
+        for v in macd:
+            if v == "-":
+                macd_bar_data.append(v)
+            else:
+                color = "#ec0000" if v > 0 else "#00da3c"
+                macd_bar_data.append(
+                    {
+                        "value": v,
+                        "itemStyle": {"color": color}
+                    }
+                )
+
         bar_macd = (
             Bar()
             .add_xaxis(xaxis_data=x_data)
             .add_yaxis(
                 "MACD", 
-                macd, 
+                macd_bar_data, 
                 xaxis_index=1, 
                 yaxis_index=1,
                 label_opts=opts.LabelOpts(is_show=False),
-                itemstyle_opts=opts.ItemStyleOpts(
-                    color=lambda x: "#ec0000" if x > 0 else "#00da3c" # Red up, Green down logic
-                )
             )
         )
         # Lines for DIFF/DEA
@@ -206,7 +247,15 @@ def draw_pro_kline(df: pd.DataFrame, main_indicator="MA", sub_indicator="VOL") -
             Line()
             .add_xaxis(xaxis_data=x_data)
             .add_yaxis("DIFF", diff, xaxis_index=1, yaxis_index=1, label_opts=opts.LabelOpts(is_show=False), is_symbol_show=False)
-            .add_yaxis("DEA", dea, xaxis_index=1, yaxis_index=1, label_opts=opts.LabelOpts(is_show=False), is_symbol_show=False)
+            .add_yaxis(
+                "DEA", 
+                dea, 
+                xaxis_index=1, 
+                yaxis_index=1, 
+                label_opts=opts.LabelOpts(is_show=False), 
+                is_symbol_show=False,
+                markpoint_opts=opts.MarkPointOpts(data=mark_points)
+            )
         )
         
         sub_chart = bar_macd.overlap(line_macd)
