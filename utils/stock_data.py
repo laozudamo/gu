@@ -152,7 +152,9 @@ def get_market_snapshot() -> pd.DataFrame:
                 "成交量": quote.get('volume'),
                 "成交额": quote.get('amount'),
                 "市盈率-动态": quote.get('pe', '-'),
-                "市净率": quote.get('pb', '-')
+                "市净率": quote.get('pb', '-'),
+                "总市值": quote.get('total_mv', '-'),
+                "流通市值": quote.get('circ_mv', '-')
             })
         return pd.DataFrame(rows)
 

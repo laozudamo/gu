@@ -13,94 +13,72 @@ from frames.components import render_stock_table_common
 
 # --- Main Views ---
 
-def render_market_status():
-    """Display real-time market status banner."""
-    status_info = get_market_status()
-    color = status_info['color']
-    message = status_info['message']
-    next_open = status_info['next_open']
-    
-    # CSS for the banner
-    st.markdown(
-        f"""
-        <div style="
-            padding: 10px;
-            border-radius: 5px;
-            background-color: {'#e6fffa' if color == 'green' else '#fff5f5' if color == 'red' else '#fffaf0'};
-            border: 1px solid {'#38b2ac' if color == 'green' else '#fc8181' if color == 'red' else '#ed8936'};
-            margin-bottom: 20px;
-            display: flex;
-            justify_content: space-between;
-            align_items: center;
-            ">
-            <div>
-                <span style="
-                    font-weight: bold; 
-                    color: {color}; 
-                    font-size: 1.1em;
-                    margin-right: 10px;
-                ">● {message}</span>
-                <span style="color: #666; font-size: 0.9em;">
-                    {f"下次开市: {next_open}" if next_open else ""}
-                </span>
-            </div>
-           
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-
 def render_header_search():
-    """Top layout with Title and Search."""
-    # Market Status Banner
-    render_market_status()
+    """Top layout with Compact Status and Search."""
     
-    col_title, col_search = st.columns([2, 3])
+    # Combined Row: Status (Left) + Search (Right)
+    c1, c2 = st.columns([1, 1], gap="small")
+    
+    with c1:
+        status_info = get_market_status()
+        color = status_info['color']
+        message = status_info['message']
+        next_open = status_info['next_open']
+        bg_color = '#f0fff4' if color == 'green' else '#fff5f5' if color == 'red' else '#fffaf0'
+        text_color = '#2f855a' if color == 'green' else '#c53030' if color == 'red' else '#dd6b20'
         
-    with col_search:
-        # Optimized Layout: Search Input + Add Button + Refresh Button in one line
-        # Use a container to simulate dropdown behavior
-        
+        # Compact Status Badge
+        st.markdown(
+            f"""
+            <div style="
+                display: flex; align_items: center; 
+                background-color: {bg_color}; 
+                padding: 8px 12px; 
+                border-radius: 8px;
+                border: 1px solid {text_color}33;
+                height: 42px;
+            ">
+                <span style="color: {text_color}; font-weight: bold; margin-right: 8px;">● {message}</span>
+                <span style="color: #718096; font-size: 0.85em;">{f"({next_open})" if next_open else ""}</span>
+            </div>
+            """, 
+            unsafe_allow_html=True
+        )
+
+    with c2:
         # Search Box
         search_query = st.text_input(
             "Search", 
-            placeholder="🔍 输入代码/名称/拼音 (回车搜索)", 
-            label_visibility="collapsed",
-            help="输入股票代码、名称或拼音缩写，按回车搜索"
+            placeholder="🔍 快速添加股票 (代码/名称/拼音)", 
+            label_visibility="collapsed"
         )
         
-        # Debounce/Delay simulation (in a real async app, we'd use a timer)
-        # Here we rely on Streamlit's re-run model.
+    # Search Logic
+    if search_query:
+        # 1. Fetch Lightweight List (Cached)
+        all_stocks = get_all_stock_list()
         
-        if search_query:
-            # 1. Fetch Lightweight List (Cached)
-            with st.spinner("Searching..."):
-                all_stocks = get_all_stock_list()
-                
-            if not all_stocks.empty:
-                search_query = search_query.upper()
-                mask = (
-                    all_stocks['代码'].astype(str).str.contains(search_query) | 
-                    all_stocks['名称'].str.contains(search_query)
-                )
-                if 'pinyin' in all_stocks.columns:
-                    mask |= all_stocks['pinyin'].str.contains(search_query)
-                
-                results = all_stocks[mask].head(5) # Limit to 5 results for "Dropdown" feel
-                
-                if not results.empty:
-                    # Show results in an expander-like container or just list
+        if not all_stocks.empty:
+            search_query = search_query.upper()
+            mask = (
+                all_stocks['代码'].astype(str).str.contains(search_query) | 
+                all_stocks['名称'].str.contains(search_query)
+            )
+            if 'pinyin' in all_stocks.columns:
+                mask |= all_stocks['pinyin'].str.contains(search_query)
+            
+            results = all_stocks[mask].head(5) # Limit to 5 results
+            
+            if not results.empty:
+                with st.container():
                     st.markdown("---")
                     st.caption(f"找到 {len(results)} 个匹配项:")
-                    
                     for _, row in results.iterrows():
-                        rc1, rc2, rc3 = st.columns([4, 2, 1])
-                        with rc1:
-                            st.write(f"**{row['代码']}**")
-                        with rc2:
-                            st.write(row['名称'])
+                        rc1, rc2, rc3 = st.columns([3, 4, 2])
+                        with rc1: st.write(f"`{row['代码']}`")
+                        with rc2: st.write(row['名称'])
                         with rc3:
-                            if st.button("➕", key=f"add_{row['代码']}", help=f"添加 {row['名称']}"):
+                            if st.button("➕ 添加", key=f"add_{row['代码']}", use_container_width=True):
                                 success, msg = add_to_pool(row['代码'], row['名称'])
                                 if success:
                                     st.toast(msg, icon="✅")
@@ -108,17 +86,16 @@ def render_header_search():
                                     st.rerun()
                                 else:
                                     st.toast(msg, icon="⚠️")
-                else:
-                    st.warning("未找到匹配股票")
             else:
-                st.error("无法加载股票列表")
+                st.warning("未找到匹配股票")
 
 def stock_picking_pool():
     render_header_search()
-    st.divider()
+    # Remove large divider, rely on spacing
+    st.markdown("<div style='margin-bottom: 10px'></div>", unsafe_allow_html=True)
     
     pool = load_stock_pool()
-    with st.spinner("更新行情数据..."):
+    with st.spinner("更新行情..."):
         market_data = get_market_snapshot()
         
     render_stock_table_common(pool, market_data, pool_type='picking')

@@ -235,7 +235,9 @@ class CompanyCacheManager:
                 "成交量": random.randint(1000, 1000000),
                 "成交额": random.randint(10000, 10000000),
                 "市盈率-动态": round(random.uniform(5, 50), 2),
-                "市净率": round(random.uniform(0.5, 5), 2)
+                "市净率": round(random.uniform(0.5, 5), 2),
+                "总市值": random.uniform(10e8, 1000e8),
+                "流通市值": random.uniform(5e8, 800e8)
             })
             
         return pd.DataFrame(mock_data)
@@ -437,6 +439,8 @@ class CompanyCacheManager:
                     "amount": row.get('成交额'),
                     "pe": row.get('市盈率-动态'),
                     "pb": row.get('市净率'),
+                    "total_mv": row.get('总市值'),
+                    "circ_mv": row.get('流通市值'),
                     "timestamp": timestamp
                 }
                 
