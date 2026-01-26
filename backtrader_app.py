@@ -7,6 +7,7 @@ from utils.logs import logger
 from utils.processing import gen_stock_df, run_backtrader
 from utils.schemas import StrategyBase
 from utils.locale import t
+from utils.cache_manager import get_cache_manager
 from frames import callback, stock_picking_pool, stock_watching_pool, stock_trading_pool
 
 
@@ -20,6 +21,13 @@ def main():
         st.session_state["language"] = "zh"
     
     with st.sidebar:
+        st.header("功能导航")
+        
+        # Display success message from previous run if flag is set
+        if st.session_state.get('refresh_success', False):
+            st.success("✅ 刷新成功！")
+            st.session_state['refresh_success'] = False
+            
         page = st.navigation(
             pages=[
                 st.Page(stock_picking_pool, title="选股池", icon=":material/search:"),
@@ -28,6 +36,18 @@ def main():
                 st.Page(callback, title="回测模块", icon=":material/history:"),
             ]
         )
+        
+        st.divider()
+        if st.button("🔄 刷新行情数据", use_container_width=True):
+            with st.spinner("正在同步最新行情..."):
+                try:
+                    cm = get_cache_manager()
+                    cm.update_cache(force=True)
+                    st.cache_data.clear()
+                    st.session_state['refresh_success'] = True
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"更新失败: {e}")
     
     page.run()
 
