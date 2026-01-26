@@ -21,8 +21,6 @@ def main():
         st.session_state["language"] = "zh"
     
     with st.sidebar:
-        st.header("功能导航")
-        
         # Display success message from previous run if flag is set
         if st.session_state.get('refresh_success', False):
             st.success("✅ 刷新成功！")
