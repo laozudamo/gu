@@ -38,16 +38,16 @@ def main():
         )
         
         st.divider()
-        if st.button("🔄 刷新行情数据", use_container_width=True):
-            with st.spinner("正在同步最新行情..."):
-                try:
-                    cm = get_cache_manager()
-                    cm.update_cache(force=True)
-                    st.cache_data.clear()
-                    st.session_state['refresh_success'] = True
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"更新失败: {e}")
+        # if st.button("🔄 刷新行情数据", use_container_width=True):
+        #     with st.spinner("正在同步最新行情..."):
+        #         try:
+        #             cm = get_cache_manager()
+        #             cm.update_cache(force=True)
+        #             st.cache_data.clear()
+        #             st.session_state['refresh_success'] = True
+        #             st.rerun()
+        #         except Exception as e:
+        #             st.error(f"更新失败: {e}")
     
     page.run()
 

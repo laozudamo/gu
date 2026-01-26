@@ -13,11 +13,13 @@ from frames.components import render_stock_table_common
 
 # --- Main Views ---
 
+from utils.cache_manager import get_cache_manager
+
 def render_header_search():
-    """Top layout with Compact Status and Search."""
+    """Top layout with Compact Status, Search, and Refresh."""
     
-    # Combined Row: Status (Left) + Search (Right)
-    c1, c2 = st.columns([1, 1], gap="small")
+    # Combined Row: Status (Left) + Search (Middle) + Refresh (Right)
+    c1, c2, c3 = st.columns([1.2, 1.2, 0.4], gap="small")
     
     with c1:
         status_info = get_market_status()
@@ -37,9 +39,11 @@ def render_header_search():
                 border-radius: 8px;
                 border: 1px solid {text_color}33;
                 height: 42px;
+                white-space: nowrap;
+                overflow: hidden;
             ">
-                <span style="color: {text_color}; font-weight: bold; margin-right: 8px;">● {message}</span>
-                <span style="color: #718096; font-size: 0.85em;">{f"({next_open})" if next_open else ""}</span>
+                <span style="color: {text_color}; font-weight: bold; margin-right: 8px; font-size: 0.9em;">● {message}</span>
+                <span style="color: #718096; font-size: 0.8em;">{f"({next_open})" if next_open else ""}</span>
             </div>
             """, 
             unsafe_allow_html=True
@@ -52,6 +56,20 @@ def render_header_search():
             placeholder="🔍 快速添加股票 (代码/名称/拼音)", 
             label_visibility="collapsed"
         )
+        
+    with c3:
+        # Refresh Button with Visual Feedback
+        if st.button("🔄", help="立即刷新行情数据", use_container_width=True):
+             with st.spinner(""):
+                try:
+                    cm = get_cache_manager()
+                    cm.update_cache(force=True)
+                    st.cache_data.clear()
+                    st.toast("行情数据已更新", icon="✅")
+                    time.sleep(0.5)
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"更新失败: {e}")
         
     # Search Logic
     if search_query:
