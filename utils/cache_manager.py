@@ -281,17 +281,55 @@ class CompanyCacheManager:
         # We prioritize EastMoney (EM) as it has more fields.
         df = pd.DataFrame()
         error_msgs = []
+        source = "EM"
         
         try:
             df = ak.stock_zh_a_spot_em()
+            # EM returns Market Value in Yuan (e.g. 2000000000000)
         except Exception as e:
             error_msgs.append(f"EastMoney: {str(e)}")
             # Fallback to Sina
             try:
                 df = ak.stock_zh_a_spot()
+                source = "Sina"
+                # Sina returns: symbol, code, name, trade, pricechange, changepercent, buy, sell, settlement, open, high, low, volume, amount, ticktime, per, pb, mktcap, nmc, turnoverratio
+                # mktcap/nmc are in Wan (10^4). Need to convert to Yuan.
+                # Rename columns to match EM style for consistent processing below
+                # Assuming Sina columns: code, name, trade (price), changepercent, mktcap, nmc, per, pb, volume, amount
+                
+                # Check column names if possible. If standard API, we assume standard names.
+                # Map Sina columns to EM columns:
+                # 代码 -> code
+                # 名称 -> name
+                # 最新价 -> trade
+                # 涨跌幅 -> changepercent
+                # 成交量 -> volume
+                # 成交额 -> amount
+                # 市盈率-动态 -> per
+                # 市净率 -> pb
+                # 总市值 -> mktcap * 10000
+                # 流通市值 -> nmc * 10000
+                
+                rename_map = {
+                    'code': '代码',
+                    'name': '名称',
+                    'trade': '最新价',
+                    'changepercent': '涨跌幅',
+                    'volume': '成交量',
+                    'amount': '成交额',
+                    'per': '市盈率-动态',
+                    'pb': '市净率'
+                }
+                df = df.rename(columns=rename_map)
+                
+                # Handle Market Value Unit Conversion (Wan -> Yuan)
+                if 'mktcap' in df.columns:
+                    df['总市值'] = df['mktcap'] * 10000
+                if 'nmc' in df.columns:
+                    df['流通市值'] = df['nmc'] * 10000
+                    
             except Exception as e_sina:
                 error_msgs.append(f"Sina: {str(e_sina)}")
-                # Normalize Sina columns if needed (omitted for brevity, assuming standard columns exist or we map them)
         
         if df.empty:
             error_detail = "; ".join(error_msgs)
