@@ -41,11 +41,10 @@ def main():
                 st.Page(stock_picking_pool, title="选股池", icon=":material/search:"),
                 st.Page(stock_watching_pool, title="观察池", icon=":material/visibility:"),
                 st.Page(stock_trading_pool, title="交易池", icon=":material/currency_exchange:"),
-                st.Page(callback, title="回测模块", icon=":material/history:"),
+                # st.Page(callback, title="回测模块", icon=":material/history:"),
             ]
         )
         
-        st.divider()
         # if st.button("🔄 刷新行情数据", use_container_width=True):
         #     with st.spinner("正在同步最新行情..."):
         #         try:
