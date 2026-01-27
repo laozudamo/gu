@@ -293,58 +293,15 @@ def get_realtime_price(code: str) -> Dict[str, Any]:
     except:
         pass
     
-    # 3. Mock Data Fallback
-    import random
-    base = random.uniform(10, 50)
-    change = random.uniform(-5, 5)
-    return {
-        "latest": round(base * (1 + change/100), 2),
-        "change": round(change, 2),
-        "pe": "-", 
-        "pb": "-"
-    }
-    
+    # Return empty if all real data sources fail
     return {}
-
+    
 @st.cache_data(ttl=3600*24)
 def get_stock_financials(code: str) -> Dict[str, float]:
     """Fetch financial indicators like ROE, Gross Margin."""
     # Use Cache Manager for persistent storage
     cm = get_cache_manager()
     return cm.get_financials(code)
-
-def _generate_mock_history(code: str, period="daily") -> pd.DataFrame:
-    """Generate mock historical data for charts."""
-    import random
-    
-    # Generate 100 days of data
-    end_date = datetime.now()
-    dates = pd.date_range(end=end_date, periods=100, freq='B') # Business days
-    
-    data = []
-    price = random.uniform(10, 100)
-    
-    for date in dates:
-        open_p = price * (1 + random.uniform(-0.02, 0.02))
-        close_p = open_p * (1 + random.uniform(-0.02, 0.02))
-        high_p = max(open_p, close_p) * (1 + random.uniform(0, 0.01))
-        low_p = min(open_p, close_p) * (1 - random.uniform(0, 0.01))
-        vol = random.randint(1000, 100000)
-        
-        data.append({
-            "date": date,
-            "open": round(open_p, 2),
-            "close": round(close_p, 2),
-            "high": round(high_p, 2),
-            "low": round(low_p, 2),
-            "volume": vol
-        })
-        
-        price = close_p
-        
-    df = pd.DataFrame(data)
-    df.set_index('date', inplace=True)
-    return df
 
 @st.cache_data(ttl=3600)
 def get_stock_history(code: str, period="daily") -> pd.DataFrame:
@@ -384,9 +341,9 @@ def get_stock_history(code: str, period="daily") -> pd.DataFrame:
         except Exception as e:
             print(f"Error fetching history (fallback) for {code}: {e}")
     
-    # 3. Fallback to Mock Data if all else fails
-    print(f"[WARN] Switching to Mock History for {code}")
-    return _generate_mock_history(code, period)
+    # Return empty if all real data sources fail
+    print(f"[WARN] Failed to fetch history for {code}")
+    return pd.DataFrame()
 
 def load_stock_pool() -> List[Dict[str, Any]]:
     """
