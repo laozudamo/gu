@@ -308,7 +308,7 @@ def render_stock_table_common(pool: list, market_data: pd.DataFrame, pool_type: 
         <style>
         /* Compact columns */
         [data-testid="column"] {
-            padding: 0rem 0.2rem !important;
+            padding: 0rem 0.25rem !important;
         }
         /* Reduce spacing between elements */
         .block-container {
@@ -321,9 +321,10 @@ def render_stock_table_common(pool: list, market_data: pd.DataFrame, pool_type: 
         /* Compact buttons */
         button {
             height: 1.8rem !important;
-            padding: 0rem 0.5rem !important;
+            padding: 0rem 0.4rem !important;
             font-size: 0.8rem !important;
             min-height: 1.8rem !important;
+            margin: 0 2px !important;
         }
         /* Divider optimization */
         hr {
@@ -515,50 +516,50 @@ def render_stock_table_common(pool: list, market_data: pd.DataFrame, pool_type: 
                     b_cols = st.columns(6)
                     
                     with b_cols[0]:
-                        if st.button("📊", key=f"d_{pool_type}_{code}", help="详情"):
+                        if st.button("📊", key=f"d_{pool_type}_{code}"):
                             show_stock_details_dialog(code, name, {"pe": pe, "pb": pb})
                     with b_cols[1]:
-                        if st.button("✏️", key=f"n_{pool_type}_{code}", help="备注"):
+                        if st.button("✏️", key=f"n_{pool_type}_{code}"):
                             edit_note_dialog(code, name, pool_type)
                     with b_cols[2]:
-                        if st.button("🏷️", key=f"t_{pool_type}_{code}", help="标签"):
+                        if st.button("🏷️", key=f"t_{pool_type}_{code}"):
                             edit_tags_dialog(code, name, pool_type)
 
                     # Custom Buttons
                     if pool_type == 'picking':
                         with b_cols[3]:
-                            if st.button("👁️", key=f"mv_{pool_type}_{code}", help="移入观察"):
+                            if st.button("👁️", key=f"mv_{pool_type}_{code}"):
                                 success, msg = move_to_watching_pool(code)
                                 if success: st.toast(msg); time.sleep(0.5); st.rerun()
                         with b_cols[4]:
-                            if st.button("🗑️", key=f"rm_{pool_type}_{code}", help="删除"):
+                            if st.button("🗑️", key=f"rm_{pool_type}_{code}"):
                                 success, msg = remove_from_pool(code)
                                 if success: st.toast(msg); time.sleep(0.5); st.rerun()
 
                     elif pool_type == 'watching':
                         with b_cols[3]:
-                            if st.button("🤝", key=f"mv_{pool_type}_{code}", help="移入交易"):
+                            if st.button("🤝", key=f"mv_{pool_type}_{code}"):
                                 success, msg = move_to_trading_pool(code)
                                 if success: st.toast(msg); time.sleep(0.5); st.rerun()
                         with b_cols[4]:
-                            if st.button("🔙", key=f"bk_{pool_type}_{code}", help="移回选股"):
+                            if st.button("🔙", key=f"bk_{pool_type}_{code}"):
                                 success, msg = move_from_watching_to_picking(code)
                                 if success: st.toast(msg); time.sleep(0.5); st.rerun()
                         with b_cols[5]:
-                            if st.button("🗑️", key=f"rm_{pool_type}_{code}", help="移除"):
+                            if st.button("🗑️", key=f"rm_{pool_type}_{code}"):
                                 success, msg = remove_from_watching_pool(code)
                                 if success: st.toast(msg); time.sleep(0.5); st.rerun()
 
                     elif pool_type == 'trading':
                         with b_cols[3]:
-                            if st.button("🔙", key=f"mv_{pool_type}_{code}", help="移回观察"):
+                            if st.button("🔙", key=f"mv_{pool_type}_{code}"):
                                 success, msg = move_from_trading_to_watching(code)
                                 if success: st.toast(msg); time.sleep(0.5); st.rerun()
                         with b_cols[4]:
-                            if st.button("💸", key=f"tr_{pool_type}_{code}", help="交易"):
+                            if st.button("💸", key=f"tr_{pool_type}_{code}"):
                                  transaction_dialog(code, name, price)
                         with b_cols[5]:
-                            if st.button("🗑️", key=f"rm_{pool_type}_{code}", help="删除"):
+                            if st.button("🗑️", key=f"rm_{pool_type}_{code}"):
                                 success, msg = remove_from_trading_pool(code)
                                 if success: st.toast(msg); time.sleep(0.5); st.rerun()
                 

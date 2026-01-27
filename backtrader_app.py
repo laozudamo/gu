@@ -12,6 +12,16 @@ from frames import callback, stock_picking_pool, stock_watching_pool, stock_trad
 
 
 st.set_page_config(page_title="量化回测系统", page_icon=":chart_with_upwards_trend:", layout="wide")
+st.markdown(
+    """
+    <style>
+    .stAppHeader { display: none; }
+    div[data-testid="stHeader"] { display: none; }
+    header[data-testid="stHeader"] { display: none; }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
 strategy_dict = load_strategy("./config/strategy.yaml")
 
