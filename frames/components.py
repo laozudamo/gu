@@ -23,6 +23,21 @@ from utils.stock_data import (
     add_transaction
 )
 from utils.risk_engine import calculate_risk_metrics
+from utils.cache_manager import get_cache_manager
+
+def render_refresh_button(key_suffix: str = ""):
+    """Render a refresh button that updates cache and reloads page."""
+    if st.button("🔄", help="立即刷新行情数据", use_container_width=True, key=f"refresh_btn_{key_suffix}"):
+         with st.spinner(""):
+            try:
+                cm = get_cache_manager()
+                cm.update_cache(force=True)
+                st.cache_data.clear()
+                st.toast("行情数据已更新", icon="✅")
+                time.sleep(0.5)
+                st.rerun()
+            except Exception as e:
+                st.error(f"更新失败: {e}")
 
 # --- Dialogs ---
 
@@ -391,7 +406,9 @@ def render_stock_table_common(pool: list, market_data: pd.DataFrame, pool_type: 
                     val = float(val)
                     if val > 100000000: # > 1亿
                         return f"{val/100000000:.1f}亿"
-                    return "-"
+                    elif val > 10000: # > 1万
+                         return f"{val/10000:.1f}万"
+                    return f"{val:.0f}"
                 except:
                     return "-"
             

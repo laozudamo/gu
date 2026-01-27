@@ -9,11 +9,9 @@ from utils.stock_data import (
     add_to_pool, 
     get_market_status
 )
-from frames.components import render_stock_table_common
+from frames.components import render_stock_table_common, render_refresh_button
 
 # --- Main Views ---
-
-from utils.cache_manager import get_cache_manager
 
 def render_header_search():
     """Top layout with Compact Status, Search, and Refresh."""
@@ -59,17 +57,7 @@ def render_header_search():
         
     with c3:
         # Refresh Button with Visual Feedback
-        if st.button("🔄", help="立即刷新行情数据", use_container_width=True):
-             with st.spinner(""):
-                try:
-                    cm = get_cache_manager()
-                    cm.update_cache(force=True)
-                    st.cache_data.clear()
-                    st.toast("行情数据已更新", icon="✅")
-                    time.sleep(0.5)
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"更新失败: {e}")
+        render_refresh_button("picking")
         
     # Search Logic
     if search_query:

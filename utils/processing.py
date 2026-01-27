@@ -25,9 +25,15 @@ def gen_stock_df(ak_params: AkshareParams) -> pd.DataFrame:
     Returns:
         pd.DataFrame: 股票历史数据
     """
-    df = ak.stock_zh_a_hist(**ak_params.model_dump())
-    if not df.empty:
-        return df[["日期", "开盘", "收盘", "最高", "最低", "成交量"]]
+    try:
+        df = ak.stock_zh_a_hist(**ak_params.model_dump())
+        if not df.empty:
+            return df[["日期", "开盘", "收盘", "最高", "最低", "成交量"]]
+    except Exception as e:
+        logger.error(f"Failed to fetch stock data: {e}")
+        # In case of connection error, we return empty dataframe
+        pass
+        
     return pd.DataFrame()
 
 
