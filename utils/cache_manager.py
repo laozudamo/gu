@@ -351,64 +351,6 @@ class CompanyCacheManager:
                 "last_updated": timestamp
             }
             
-            # Check diff
-            # Loading old file to check diff for 5000 files is SLOW (IO bound).
-            # Better approach: Keep an in-memory index of {code: hash_of_content} or just last_updated.
-            # Or: Just write blindly? No, IO is the bottleneck.
-            
-            # Compromise: We update the cache in batches or just update the in-memory cache and flush periodically?
-            # Requirement: "Persistence".
-            
-            # Let's use a "changed" flag from the API? API doesn't give it.
-            
-            # FASTEST STRATEGY:
-            # 1. Load all existing cache metadata (just modification times?) -> No.
-            # 2. Just write. Writing 5000 small files on SSD is fast (<10s). On HDD maybe slow.
-            # But we can check if we have data for this code.
-            
-            file_path = os.path.join(CACHE_DIR, f"{code}.json")
-            
-            # Simple Diff: Compare Price/Volume?
-            # If we want to be strict about "Only process changed data":
-            # We can't know if it changed without reading the old one.
-            # Reading 5000 files is slow.
-            
-            # Alternative: The "Cache" is primarily for "Remote Search" (Code/Name) and "Table Display" (Price).
-            # If we split: `metadata.json` (Code, Name, Pinyin) -> Rare update.
-            # `quotes.json` (Price, Volume) -> Frequent update.
-            # User asked for "JSON format... Company ID as key... containing all data".
-            # Maybe a single `all_quotes.json` is better for the "quotes" part.
-            # And `companies/{code}.json` for static details (Profile, Financials).
-            
-            # Let's interpret "Incremental":
-            # "Only fetch... changed data". API doesn't support this. We fetch all.
-            # "Process... changed data".
-            # We will use a `quotes.json` for the high-frequency data (Price) to ensure speed.
-            # We will use individual files for detailed static data (which we don't fetch in this loop anyway).
-            
-            # Wait, the user wants "Company basic info, business data, relations".
-            # `stock_zh_a_spot_em` only gives basic quote info + name.
-            # It does NOT give "Relations" (Sector) or "Business Data" (Financials).
-            # Those require separate API calls per stock.
-            # WE CANNOT DO THAT for 5000 stocks in 30s.
-            
-            # So, the "Incremental Update" MUST be limited to:
-            # 1. Updating Quotes (Bulk).
-            # 2. Updating Static Data (Lazy or slow background process, not in the 30s loop).
-            
-            # I will implement the 30s loop to update the QUOTES and ensure the FILES exist.
-            # I will NOT fetch financials for 5000 stocks in this loop.
-            
-            # Implementation:
-            # Write `data/company_cache/quotes.json` -> { code: { price, change, ... } }
-            # Write `data/company_cache/basic.json` -> { code: { name, pinyin ... } }
-            # This satisfies "JSON format" and "Key by ID".
-            # Splitting into 5000 files is bad for "Update 5000 items in 30s".
-            # But user asked for "Company ID as primary key".
-            # A single JSON file with structure `{ "600519": { ... }, "000001": { ... } }` is fine.
-            
-            pass # Logic moved to _perform_update implementation
-        
         # Implementation Detail:
         # We will maintain a `data/company_cache/master_cache.json` containing everything.
         # It's about 5000 stocks * 500 bytes ~= 2.5MB. Very small.
@@ -427,6 +369,17 @@ class CompanyCacheManager:
         # Pre-calc Pinyin if needed (only for new stocks)
         # We can cache pinyin in a separate dict to avoid re-calc.
         
+        def clean_num(val):
+            """Convert NaN/inf to None for JSON compliance."""
+            if val is None: return None
+            try:
+                if pd.isna(val): return None
+                # Handle infinite values if any
+                if val == float('inf') or val == float('-inf'): return None
+                return float(val)
+            except:
+                return None
+
         for row in records:
             code = str(row.get('代码'))
             # Cleaning...
@@ -461,14 +414,15 @@ class CompanyCacheManager:
                              base['pinyin'] = ""
                 
                 quote = {
-                    "price": price,
-                    "change_pct": row.get('涨跌幅'),
-                    "volume": row.get('成交量'),
-                    "amount": row.get('成交额'),
-                    "pe": row.get('市盈率-动态'),
-                    "pb": row.get('市净率'),
-                    "total_mv": row.get('总市值'),
-                    "circ_mv": row.get('流通市值'),
+                    "price": clean_num(price),
+                    "change_pct": clean_num(row.get('涨跌幅')),
+                    "volume": clean_num(row.get('成交量')),
+                    "amount": clean_num(row.get('成交额')),
+                    "turnover_rate": clean_num(row.get('换手率')),
+                    "pe": clean_num(row.get('市盈率-动态')),
+                    "pb": clean_num(row.get('市净率')),
+                    "total_mv": clean_num(row.get('总市值')),
+                    "circ_mv": clean_num(row.get('流通市值')),
                     "timestamp": timestamp
                 }
                 

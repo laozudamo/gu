@@ -151,10 +151,10 @@ def get_market_snapshot() -> pd.DataFrame:
                 "涨跌幅": quote.get('change_pct'),
                 "成交量": quote.get('volume'),
                 "成交额": quote.get('amount'),
-                "市盈率-动态": quote.get('pe', '-'),
-                "市净率": quote.get('pb', '-'),
-                "总市值": quote.get('total_mv', '-'),
-                "流通市值": quote.get('circ_mv', '-')
+                "市盈率-动态": quote.get('pe') if quote.get('pe') is not None else '-',
+                "市净率": quote.get('pb') if quote.get('pb') is not None else '-',
+                "总市值": quote.get('total_mv') if quote.get('total_mv') is not None else '-',
+                "流通市值": quote.get('circ_mv') if quote.get('circ_mv') is not None else '-'
             })
         return pd.DataFrame(rows)
 
@@ -674,3 +674,4 @@ def add_transaction(code: str, trans_type: str, price: float, volume: int, plan:
 
     save_trading_pool(pool)
     return True, "交易已记录"
+
