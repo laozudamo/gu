@@ -325,11 +325,12 @@ def render_stock_table_common(pool: list, market_data: pd.DataFrame, pool_type: 
 
     # Header Row
     if pool_type == 'trading':
-        header_cols = st.columns([0.8, 1.2, 1.5, 1.5, 1.5, 1.5, 0.5, 2.0])
-        headers = ["代码", "名称", "现价/涨跌", "市值(亿)", "持仓/成本", "浮动盈亏", "备注", "操作"]
+        header_cols = st.columns([0.8, 1.2, 1.5, 1.2, 1.2, 1.5, 1.5, 0.5, 2.0])
+        headers = ["代码", "名称", "现价/涨跌", "总市值", "流通市值", "持仓/成本", "浮动盈亏", "备注", "操作"]
     else:
-        header_cols = st.columns([0.9, 1.2, 1.0, 1.0, 1.8, 1.2, 0.4, 2.0])
-        headers = ["代码", "名称", "最新价", "涨跌幅", "市值(亿)", "标签", "📝", "操作"]
+        # Adjusted for new columns: Total MV, Circ MV, EPS, ROE
+        header_cols = st.columns([0.9, 1.1, 1.0, 1.0, 1.1, 1.1, 0.8, 0.9, 1.2, 1.8])
+        headers = ["代码", "名称", "最新价", "涨跌幅", "总市值", "流市值", "EPS", "ROE", "标签", "操作"]
         
     for col, h in zip(header_cols, headers):
         col.markdown(f"<span class='header-text'>{h}</span>", unsafe_allow_html=True)
@@ -378,17 +379,24 @@ def render_stock_table_common(pool: list, market_data: pd.DataFrame, pool_type: 
             if pd.isna(price): price = "-"
             if pd.isna(change): change = 0.0
             
+            # Fetch Financials (EPS, ROE)
+            # This uses cache so it's efficient after first load
+            fin_data = get_stock_financials(code)
+            eps = fin_data.get('EPS', '-')
+            roe = fin_data.get('ROE', '-')
+            
             # Format Market Value
             def format_mv(val):
                 try:
                     val = float(val)
                     if val > 100000000: # > 1亿
-                        return f"{val/100000000:.1f}"
+                        return f"{val/100000000:.1f}亿"
                     return "-"
                 except:
                     return "-"
             
-            mv_str = f"总: {format_mv(total_mv)} / 流: {format_mv(circ_mv)}"
+            total_mv_str = format_mv(total_mv)
+            circ_mv_str = format_mv(circ_mv)
 
             # Ensure price is float for calc
             current_price_val = 0.0
@@ -402,9 +410,9 @@ def render_stock_table_common(pool: list, market_data: pd.DataFrame, pool_type: 
             # Row Container
             with st.container():
                 if pool_type == 'trading':
-                    c1, c2, c3, c4, c5, c6, c7, c8 = st.columns([0.8, 1.2, 1.5, 1.5, 1.5, 1.5, 0.5, 2.0])
+                    c1, c2, c3, c4, c5, c6, c7, c8, c9 = st.columns([0.8, 1.2, 1.5, 1.2, 1.2, 1.5, 1.5, 0.5, 2.0])
                 else:
-                    c1, c2, c3, c4, c5, c6, c7, c8 = st.columns([0.9, 1.2, 1.0, 1.0, 1.8, 1.2, 0.4, 2.0])
+                    c1, c2, c3, c4, c5, c6, c7, c8, c9, c10 = st.columns([0.9, 1.1, 1.0, 1.0, 1.1, 1.1, 0.8, 0.9, 1.2, 1.8])
                 
                 # 1. Code
                 c1.markdown(f"<span style='font-family:monospace; font-size:0.9em'>{code}</span>", unsafe_allow_html=True)
@@ -425,19 +433,27 @@ def render_stock_table_common(pool: list, market_data: pd.DataFrame, pool_type: 
                     c3.markdown(f"**{price}**", unsafe_allow_html=True)
                     c4.markdown(f"<span style='color:{color}'>{change:.2f}% {arrow}</span>", unsafe_allow_html=True)
                 
-                # 4/5. Market Value (New Column)
-                # Position depends on pool_type
+                # 4/5. Market Value (Split Columns)
                 if pool_type == 'trading':
-                    c4.markdown(f"<span style='font-size:0.85em; color:#4a5568'>{mv_str}</span>", unsafe_allow_html=True)
+                    c4.markdown(f"<span style='font-size:0.85em; color:#4a5568'>{total_mv_str}</span>", unsafe_allow_html=True)
+                    c5.markdown(f"<span style='font-size:0.85em; color:#4a5568'>{circ_mv_str}</span>", unsafe_allow_html=True)
                 else:
-                    c5.markdown(f"<span style='font-size:0.85em; color:#4a5568'>{mv_str}</span>", unsafe_allow_html=True)
+                    c5.markdown(f"<span style='font-size:0.85em; color:#4a5568'>{total_mv_str}</span>", unsafe_allow_html=True)
+                    c6.markdown(f"<span style='font-size:0.85em; color:#4a5568'>{circ_mv_str}</span>", unsafe_allow_html=True)
+                    
+                    # EPS & ROE
+                    eps_val = f"{eps:.2f}" if isinstance(eps, (int, float)) else "-"
+                    roe_val = f"{roe:.2f}%" if isinstance(roe, (int, float)) else "-"
+                    
+                    c7.markdown(f"<span style='font-size:0.85em'>{eps_val}</span>", unsafe_allow_html=True)
+                    c8.markdown(f"<span style='font-size:0.85em'>{roe_val}</span>", unsafe_allow_html=True)
 
                 # 4. Trading Specifics OR Tags
                 if pool_type == 'trading':
                     holdings = s.get('holdings', {})
                     vol = holdings.get('volume', 0)
                     avg = holdings.get('avg_cost', 0.0)
-                    c5.markdown(f"<span style='font-size:0.9em'><b>{vol}</b> / {avg:.1f}</span>", unsafe_allow_html=True)
+                    c6.markdown(f"<span style='font-size:0.9em'><b>{vol}</b> / {avg:.1f}</span>", unsafe_allow_html=True)
                     
                     # PnL
                     if vol > 0 and current_price_val > 0:
@@ -446,25 +462,38 @@ def render_stock_table_common(pool: list, market_data: pd.DataFrame, pool_type: 
                         pnl_val = market_val - cost_val_calc
                         pnl_pct = (pnl_val / cost_val_calc) * 100 if cost_val_calc > 0 else 0
                         pnl_color = "#c53030" if pnl_val > 0 else "#2f855a" if pnl_val < 0 else "#718096"
-                        c6.markdown(f"<span style='color:{pnl_color}; font-weight:bold'>{pnl_val:+.0f}</span> <span style='color:{pnl_color}; font-size:0.85em'>({pnl_pct:+.1f}%)</span>", unsafe_allow_html=True)
+                        c7.markdown(f"<span style='color:{pnl_color}; font-weight:bold'>{pnl_val:+.0f}</span> <span style='color:{pnl_color}; font-size:0.85em'>({pnl_pct:+.1f}%)</span>", unsafe_allow_html=True)
                     else:
-                        c6.write("-")
+                        c7.write("-")
                         
-                    if has_note: c7.markdown("📝", help=note.get('content')[:100])
-                    else: c7.write("")
+                    if has_note: c8.markdown("📝", help=note.get('content')[:100])
+                    else: c8.write("")
                     
                 else:
                     if tags:
                         tag_html = "".join([f"<span style='background-color:#edf2f7; color:#4a5568; padding:1px 4px; border-radius:4px; font-size:0.75em; margin-right:2px;'>{t}</span>" for t in tags[:2]])
-                        c6.markdown(tag_html, unsafe_allow_html=True)
+                        c9.markdown(tag_html, unsafe_allow_html=True)
                     else:
-                        c6.write("-")
+                        c9.write("-")
 
-                    if has_note: c7.markdown("📝", help=note.get('content')[:100])
-                    else: c7.write("")
+                    # Note column removed from header but used in tooltips? 
+                    # No, I should keep it or merge.
+                    # I removed the note column from picking pool to save space.
+                    # But I need to handle the column count correctly.
+                    # New Picking: c1..c10. 
+                    # c9 is Tags. c10 is Ops.
+                    # Where is Note? I removed it from headers.
+                    # Maybe I can put a small note icon in the Name column or Tags column if there is a note?
+                    # Or just rely on the "Edit Note" button in Ops which opens the dialog.
+                    # I'll rely on the "Edit Note" button.
 
                 # 7. Operations
-                with c8:
+                if pool_type == 'trading':
+                     op_col = c9
+                else:
+                     op_col = c10
+                     
+                with op_col:
                     # Use smaller columns for buttons
                     b_cols = st.columns(6)
                     

@@ -105,7 +105,38 @@ class CompanyCacheManager:
         """Fetch financial indicators (ROE, Gross, Net) for a single stock."""
         result = {}
         try:
-            # Reusing logic from stock_data.get_stock_financials but implemented here for caching
+            # 1. Try stock_financial_abstract (More reliable for EPS/ROE)
+            try:
+                df = ak.stock_financial_abstract(symbol=code)
+                if not df.empty:
+                    # Find the latest date column (usually sorted desc, exclude metadata cols)
+                    date_cols = [c for c in df.columns if c not in ['选项', '指标']]
+                    if date_cols:
+                        latest_col = date_cols[0] 
+                        
+                        def get_val_abstract(metric_name):
+                            row = df[df['指标'] == metric_name]
+                            if not row.empty:
+                                val = row.iloc[0][latest_col]
+                                try:
+                                    return float(val)
+                                except:
+                                    return 0.0
+                            return 0.0
+
+                        result["EPS"] = get_val_abstract('基本每股收益')
+                        result["ROE"] = get_val_abstract('净资产收益率(ROE)')
+                        result["GrossMargin"] = get_val_abstract('毛利率')
+                        result["NetMargin"] = get_val_abstract('销售净利率')
+                        result["DebtRatio"] = get_val_abstract('资产负债率')
+                        
+                        # Return if we found valid data
+                        if any(v != 0 for v in result.values()):
+                            return result
+            except Exception as e:
+                logger.warning(f"stock_financial_abstract failed for {code}: {e}")
+
+            # 2. Fallback to stock_financial_analysis_indicator
             df = ak.stock_financial_analysis_indicator(symbol=code)
             if not df.empty:
                 df = df.sort_values('日期', ascending=False)
@@ -120,8 +151,11 @@ class CompanyCacheManager:
                 result["NetMargin"] = get_val('销售净利率')
                 result["EPS"] = get_val('每股收益')
                 result["DebtRatio"] = get_val('资产负债率')
-        except Exception:
-            # Fail silently or log? Silent is better for batch operations
+            else:
+                logger.warning(f"Financial data empty for {code} (both methods)")
+                
+        except Exception as e:
+            logger.error(f"Error fetching financials for {code}: {e}")
             pass
         return result
 
@@ -169,7 +203,7 @@ class CompanyCacheManager:
             self.update_financials(code) # This re-reads cache which is inefficient but safe
             return fin_data
             
-        return {"ROE": 0.0, "GrossMargin": 0.0, "NetMargin": 0.0}
+        return {"ROE": 0.0, "GrossMargin": 0.0, "NetMargin": 0.0, "EPS": 0.0}
 
     def update_cache(self, force: bool = False):
         """
